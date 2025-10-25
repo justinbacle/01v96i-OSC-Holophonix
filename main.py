@@ -323,16 +323,15 @@ class SysexHandler:
             # TODO add band handling for HPF / Shelf / Bell and input band
             if data[11] == 44:
                 # HPF Filter -> Band 1
-                bandType = 'HPF'
+                _bandType = 'HPF'
             elif data[11] == 41:
                 # Shelf filter -> Band 2
-                bandType = 'Shelf'
+                _bandType = 'Shelf'
             else:
                 # Bell filter -> Band 3
-                bandType = 'Bell'
+                _bandType = 'Bell'  # Noqa F841
                 q_raw = data[11]
                 # Logarithmic scaling: 40 -> 0.1, 0 -> 10
-                # Q = 10 * (0.1/10) ** (q_raw/40)
                 q = 10 * (0.1 / 10) ** (q_raw / 40)
                 handler.eq(selector=selector, channel=channel, band=3, Q=q)
 
