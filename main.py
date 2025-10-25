@@ -7,7 +7,7 @@ from osc.osc_sender import OSCSender
 # ----------------------------------- Masks ---------------------------------- #
 
 
-class SysexMasks:
+class SysexHandler:
     """Class to group all sysex masks and mask matching functions"""
 
     @staticmethod
@@ -16,7 +16,7 @@ class SysexMasks:
         if len(data) != len(mask):
             return False
         for idx, (d, m) in enumerate(zip(data, mask)):
-            if m in ("channel", "x", "v", "pan", "mute", "Y", "X"):
+            if isinstance(m, str):
                 continue
             if m is None:
                 continue
@@ -24,16 +24,15 @@ class SysexMasks:
                 return False
         return True
 
-
     # --- Ignore Specific Message ---
     IGNORE_MESSAGE = (67, 16, 62, 26, 127)
 
     @staticmethod
     def ignore_specific_message_mask(data: List[int]) -> bool:
-        return tuple(data) == SysexMasks.IGNORE_MESSAGE
+        return tuple(data) == SysexHandler.IGNORE_MESSAGE
 
     @staticmethod
-    def ignore_specific_message_handler(data: List[int], handler):
+    def ignore_specific_message_handler(data: List[int], handler: 'OSC_Handler'):
         pass
 
     # --- Master Fader ---
@@ -41,7 +40,7 @@ class SysexMasks:
 
     @staticmethod
     def master_fader_mask(data: List[int]) -> bool:
-        if not SysexMasks.match_sysex(data, SysexMasks.MASTER_FADER):
+        if not SysexHandler.match_sysex(data, SysexHandler.MASTER_FADER):
             return False
         x = data[10]
         v = data[11]
@@ -49,7 +48,7 @@ class SysexMasks:
         return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
 
     @staticmethod
-    def master_fader_handler(data: List[int], handler):
+    def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
         x = data[10]
         v = data[11]
         volume = (x * 128 + v) / 1023.0
@@ -60,7 +59,7 @@ class SysexMasks:
 
     @staticmethod
     def channel_fader_mask(data: List[int]) -> bool:
-        if not SysexMasks.match_sysex(data, SysexMasks.CH_FADER):
+        if not SysexHandler.match_sysex(data, SysexHandler.CH_FADER):
             return False
         channel = data[7]
         x = data[10]
@@ -68,7 +67,7 @@ class SysexMasks:
         return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
 
     @staticmethod
-    def channel_fader_handler(data: List[int], handler):
+    def channel_fader_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         x = data[10]
         v = data[11]
@@ -97,7 +96,7 @@ class SysexMasks:
         return 0 <= channel <= 15 and 0 <= pan <= 127
 
     @staticmethod
-    def pan_handler(data: List[int], handler):
+    def pan_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         if data[8] == 0:  # Right Pan
             pan = data[11] / 63
@@ -130,7 +129,7 @@ class SysexMasks:
         return 0 <= channel <= 15 and 0 <= y <= 127
 
     @staticmethod
-    def y_handler(data: List[int], handler):
+    def y_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         if data[8] == 0:  # Positive Y
             y = data[11] / 63
@@ -163,7 +162,7 @@ class SysexMasks:
         return 0 <= channel <= 15 and 0 <= x <= 127
 
     @staticmethod
-    def x_handler(data: List[int], handler):
+    def x_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         if data[8] == 0:  # Positive X
             x = data[11] / 63
@@ -179,9 +178,9 @@ class SysexMasks:
 
     @staticmethod
     def master_mute_mask_1(data: List[int]) -> bool:
-        if len(data) != len(SysexMasks.MASTER_MUTE_1):
+        if len(data) != len(SysexHandler.MASTER_MUTE_1):
             return False
-        for idx, (d, m) in enumerate(zip(data, SysexMasks.MASTER_MUTE_1)):
+        for idx, (d, m) in enumerate(zip(data, SysexHandler.MASTER_MUTE_1)):
             if m is None:
                 continue
             if d != m:
@@ -189,7 +188,7 @@ class SysexMasks:
         return True
 
     @staticmethod
-    def master_mute_handler(data: List[int], handler):
+    def master_mute_handler(data: List[int], handler: 'OSC_Handler'):
         mute_val = data[11]
         osc_mute = 0 if mute_val == 1 else 1
         handler.master_mute(osc_mute)
@@ -198,9 +197,9 @@ class SysexMasks:
 
     @staticmethod
     def master_mute_mask_2(data: List[int]) -> bool:
-        if len(data) != len(SysexMasks.MASTER_MUTE_2):
+        if len(data) != len(SysexHandler.MASTER_MUTE_2):
             return False
-        for idx, (d, m) in enumerate(zip(data, SysexMasks.MASTER_MUTE_2)):
+        for idx, (d, m) in enumerate(zip(data, SysexHandler.MASTER_MUTE_2)):
             if m is None:
                 continue
             if d != m:
@@ -223,14 +222,14 @@ class SysexMasks:
 
     @staticmethod
     def mute_mask_1(data: List[int]) -> bool:
-        if not SysexMasks.match_mute_sysex(data, SysexMasks.MUTE_1):
+        if not SysexHandler.match_mute_sysex(data, SysexHandler.MUTE_1):
             return False
         channel = data[7]
         mute = data[11]
         return 0 <= channel <= 15 and mute in (0, 1)
 
     @staticmethod
-    def mute_handler_1(data: List[int], handler):
+    def mute_handler_1(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         mute = data[11]
         osc_mute = 0 if mute == 1 else 1
@@ -240,30 +239,31 @@ class SysexMasks:
 
     @staticmethod
     def mute_mask_2(data: List[int]) -> bool:
-        if not SysexMasks.match_mute_sysex(data, SysexMasks.MUTE_2):
+        if not SysexHandler.match_mute_sysex(data, SysexHandler.MUTE_2):
             return False
         channel = data[7]
         mute = data[11]
         return 0 <= channel <= 15 and mute in (0, 1)
 
     @staticmethod
-    def mute_handler_2(data: List[int], handler):
+    def mute_handler_2(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         mute = data[11]
         osc_mute = 0 if mute == 1 else 1
         handler.mute(channel, osc_mute)
 
     # EQ
-    # Band 1                                 V => 82 : Master L/R, 32 : Chan 1-16
-    #                                                V : if Master : 0/1 : L/R. If Channel : channel number
-    # --- EQ Band 1 Gain ---
-    EQ_BAND_1_GAIN = [67, 16, 62, 127, 1, "Sel", 3, "Ch", None, None, "u", "v"]
+    # TODO find different EQ bands
+    # Band 1                            V => 82 : Master L/R, 32 : Chan 1-16
+    #                                          V => 3 : Gain, 2 : Frequency, 1 : type / Q
+    #                                                  V : if Master : 0/1 : L/R. If Channel : channel number
+    EQ_BAND_1 = [67, 16, 62, 127, 1, "Sel", "Param", "Ch", None, None, "u", "v"]
 
     @staticmethod
-    def eq_band_1_gain_mask(data: List[int]) -> bool:
-        if len(data) != len(SysexMasks.EQ_BAND_1_GAIN):
+    def eq_band_1_mask(data: List[int]) -> bool:
+        if len(data) != len(SysexHandler.EQ_BAND_1):
             return False
-        for d, m in zip(data, SysexMasks.EQ_BAND_1_GAIN):
+        for d, m in zip(data, SysexHandler.EQ_BAND_1):
             if isinstance(m, str):
                 continue
             if m is None:
@@ -273,28 +273,69 @@ class SysexMasks:
         channel = data[7]
         u = data[10]
         v = data[11]
+        param = data[6]
         selector = data[5]
-        return 0 <= channel <= 15 and 0 <= u <= 127 and 0 <= v <= 127 and selector in (82, 32)
+        type = data[7]
+        return (
+            0 <= channel <= 15
+            and 0 <= u <= 127
+            and 0 <= v <= 127
+            and selector in (82, 32)
+            and param in (3, 2, 1)
+            and type in range(0, 41)
+        )
 
     # EQ Bands work differently in 01v96i than Holophonix
     #   01v96i  >   Holophonix
-    #   Band 1  >   Band 1 or Band 2 depending on filter type (shelf / bell)
-    #   Band 2  >   Band 3
-    #   Band 3  >   Band 4
-    #   Band 4  >   Band 5 or Band 6 depending on filter type (shelf / bell)
+    #   Band 1  >   Band 1 or 2 or 3 depending on filter type (cut / shelf / bell)
+    #   Band 2  >   Band 4
+    #   Band 3  >   Band 5
+    #   Band 4  >   Band 6 or 7 or 8 depending on filter type (cut / shelf / bell)
 
     @staticmethod
-    def eq_band_1_gain_handler(data: List[int], handler):
-        if data[10] < 64:
-            value = data[10] * 127 + data[11]
-        else:
-            value = -((127 - data[10]) * 127 + (127 - data[11]))
-        value = value / 178 * 18
+    def eq_band_1_handler(data: List[int], handler: 'OSC_Handler'):
         if data[5] == 82:  # Master
-            handler.eq(selector='master', band=1, value=value)
-        else:
+            selector = 'master'
+            channel = None
+        elif data[5] == 32:  # Channel
+            selector = 'channel'
             channel = data[7]
-            handler.eq(selector='channel', channel=channel, band=1, value=value)
+        else:
+            logging.error("Invalid selector in EQ message")
+            return
+
+        if data[6] == 3:  # Gain handling
+            if data[10] < 64:
+                gain = data[10] * 127 + data[11]
+            else:
+                gain = -((127 - data[10]) * 127 + (127 - data[11]))
+            gain = gain / 178 * 18
+            handler.eq(selector=selector, channel=channel, band=1, gain=gain)
+        elif data[6] == 2:  # Frequency handling
+            # Logarithmic scaling: value=5 -> 21.2 Hz, value=124 -> 20000 Hz
+            v = data[11]
+            v_min, v_max = 5, 124
+            hz_min, hz_max = 21.2, 20000
+            # Logarithmic interpolation
+            freq = hz_min * ((hz_max / hz_min) ** ((v - v_min) / (v_max - v_min)))
+            handler.eq(selector=selector, channel=channel, band=1, freq=freq)
+        elif data[6] == 1:  # Type / Q handling
+            # TODO add band handling for HPF / Shelf / Bell and input band
+            if data[11] == 44:
+                # HPF Filter -> Band 1
+                bandType = 'HPF'
+            elif data[11] == 41:
+                # Shelf filter -> Band 2
+                bandType = 'Shelf'
+            else:
+                # Bell filter -> Band 3
+                bandType = 'Bell'
+                q_raw = data[11]
+                # Logarithmic scaling: 40 -> 0.1, 0 -> 10
+                # Q = 10 * (0.1/10) ** (q_raw/40)
+                q = 10 * (0.1 / 10) ** (q_raw / 40)
+                handler.eq(selector=selector, channel=channel, band=3, Q=q)
+
 
 # --------------------------------- Handlers --------------------------------- #
 
@@ -356,91 +397,41 @@ class OSC_Handler:
         self.osc_sender.send(osc_address, value)
         print(f"OSC sent: {osc_address} {value}")
 
-    def eq(self, selector: str, band: int, value: float, channel: int | None = None):
-        if selector == 'master':
-            osc_address = f"/master/equalizer/filter/{band}/gain"
-        else:
-            if channel is None:
-                logging.error("Channel must be provided for channel EQ")
+    def eq(
+            self, selector: str, band: int,
+            gain: float | None = None, freq: float | None = None, Q: float | None = None,
+            channel: int | None = None
+    ):
+        if gain is not None:
+            if selector == 'master':
+                osc_address = f"/master/equalizer/filter/{band}/gain"
             else:
-                osc_address = f"/track/{channel+1}/equalizer/filter/{band}/gain"
-        self.osc_sender.send(osc_address, value)
-        print(f"OSC sent: {osc_address} {value}")
-
-
-def ignore_specific_message_handler(data: List[int], handler: OSC_Handler):
-    pass
-
-
-def fader_volume_handler(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    x = data[10]
-    v = data[11]
-    volume = (x * 128 + v) / 1023.0
-    handler.volume(channel, volume)
-
-
-def master_fader_handler(data: List[int], handler: OSC_Handler):
-    x = data[10]
-    v = data[11]
-    volume = (x * 128 + v) / 1023.0
-    handler.master_volume(volume)
-
-
-def pan_handler(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    if data[8] == 0:  # Right Pan
-        pan = data[11] / 63
-    elif data[8] == 127:  # Left Pan
-        pan = -(1 - data[11] / 63) - 1
-    else:
-        pan = 0
-        logging.warning(f"Unexpected pan value: {data[8]}")
-    handler.pan(channel, pan)
-
-
-def y_handler(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    if data[8] == 0:  # Positive Y
-        y = data[11] / 63
-    elif data[8] == 127:  # Negative Y
-        y = -(1 - data[11] / 63) - 1
-    else:
-        y = 0
-        logging.warning(f"Unexpected pan value: {data[8]}")
-    handler.y(channel, y)
-
-
-def x_handler(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    if data[8] == 0:  # Positive X
-        x = data[11] / 63
-    elif data[8] == 127:  # Negative X
-        x = -(1 - data[11] / 63) - 1
-    else:
-        x = 0
-        logging.warning(f"Unexpected pan value: {data[8]}")
-    handler.x(channel, x)
-
-
-def master_mute_handler(data: List[int], handler: OSC_Handler):
-    mute_val = data[11]
-    osc_mute = 0 if mute_val == 1 else 1
-    handler.master_mute(osc_mute)
-
-
-def mute_handler_1(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    mute = data[11]
-    osc_mute = 0 if mute == 1 else 1
-    handler.mute(channel, osc_mute)
-
-
-def mute_handler_2(data: List[int], handler: OSC_Handler):
-    channel = data[7]
-    mute = data[11]
-    osc_mute = 0 if mute == 1 else 1
-    handler.mute(channel, osc_mute)
+                if channel is None:
+                    logging.error("Channel must be provided for channel EQ")
+                else:
+                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/gain"
+            self.osc_sender.send(osc_address, gain)
+            print(f"OSC sent: {osc_address} {gain}")
+        if freq is not None:
+            if selector == 'master':
+                osc_address = f"/master/equalizer/filter/{band}/freq"
+            else:
+                if channel is None:
+                    logging.error("Channel must be provided for channel EQ")
+                else:
+                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/freq"
+            self.osc_sender.send(osc_address, freq)
+            print(f"OSC sent: {osc_address} {freq}")
+        if Q is not None:
+            if selector == 'master':
+                osc_address = f"/master/equalizer/filter/{band}/q"
+            else:
+                if channel is None:
+                    logging.error("Channel must be provided for channel EQ")
+                else:
+                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/q"
+            self.osc_sender.send(osc_address, Q)
+            print(f"OSC sent: {osc_address} {Q}")
 
 
 class SysexDispatcher:
@@ -497,18 +488,18 @@ def main():
     handler = OSC_Handler(osc_sender)
     dispatcher = SysexDispatcher(handler)
     dispatcher.add_handler(
-        SysexMasks.ignore_specific_message_mask, SysexMasks.ignore_specific_message_handler
+        SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler
     )
-    dispatcher.add_handler(SysexMasks.master_fader_mask, SysexMasks.master_fader_handler)
-    dispatcher.add_handler(SysexMasks.master_mute_mask_1, SysexMasks.master_mute_handler)
-    dispatcher.add_handler(SysexMasks.master_mute_mask_2, SysexMasks.master_mute_handler)
-    dispatcher.add_handler(SysexMasks.channel_fader_mask, SysexMasks.channel_fader_handler)
-    dispatcher.add_handler(SysexMasks.mute_mask_1, SysexMasks.mute_handler_1)
-    dispatcher.add_handler(SysexMasks.mute_mask_2, SysexMasks.mute_handler_2)
-    dispatcher.add_handler(SysexMasks.pan_mask, SysexMasks.pan_handler)
-    dispatcher.add_handler(SysexMasks.y_mask, SysexMasks.y_handler)
-    dispatcher.add_handler(SysexMasks.x_mask, SysexMasks.x_handler)
-    dispatcher.add_handler(SysexMasks.eq_band_1_gain_mask, SysexMasks.eq_band_1_gain_handler)
+    dispatcher.add_handler(SysexHandler.master_fader_mask, SysexHandler.master_fader_handler)
+    dispatcher.add_handler(SysexHandler.master_mute_mask_1, SysexHandler.master_mute_handler)
+    dispatcher.add_handler(SysexHandler.master_mute_mask_2, SysexHandler.master_mute_handler)
+    dispatcher.add_handler(SysexHandler.channel_fader_mask, SysexHandler.channel_fader_handler)
+    dispatcher.add_handler(SysexHandler.mute_mask_1, SysexHandler.mute_handler_1)
+    dispatcher.add_handler(SysexHandler.mute_mask_2, SysexHandler.mute_handler_2)
+    dispatcher.add_handler(SysexHandler.pan_mask, SysexHandler.pan_handler)
+    dispatcher.add_handler(SysexHandler.y_mask, SysexHandler.y_handler)
+    dispatcher.add_handler(SysexHandler.x_mask, SysexHandler.x_handler)
+    dispatcher.add_handler(SysexHandler.eq_band_1_mask, SysexHandler.eq_band_1_handler)
 
     midi_port = select_midi_port()
     if not midi_port:
