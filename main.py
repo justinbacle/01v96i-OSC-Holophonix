@@ -7,164 +7,192 @@ from osc.osc_sender import OSCSender
 # ----------------------------------- Masks ---------------------------------- #
 
 
-def ignore_specific_message_mask(data: List[int]) -> bool:
-    return tuple(data) == (67, 16, 62, 26, 127)
+class SysexMasks:
+    """Class to group all sysex masks and mask matching functions"""
 
-
-# Master fader mask
-#                                               v can be 0 or 1
-MASTER_FADER_MASK = [67, 16, 62, 127, 1, 79, 0, 0, 0, 0, "x", "v"]
-
-
-def master_fader_mask(data: List[int]) -> bool:
-    if not match_sysex(data, MASTER_FADER_MASK):
-        return False
-    x = data[10]
-    v = data[11]
-    channel = data[7]
-    return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
-
-
-# --- Volume/Fader Feature ---
-VOLUME_MASK = [67, 16, 62, 127, 1, 28, 0, "channel", 0, 0, "x", "v"]
-
-
-def fader_volume_mask(data: List[int]) -> bool:
-    if not match_sysex(data, VOLUME_MASK):
-        return False
-    channel = data[7]
-    x = data[10]
-    v = data[11]
-    return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
-
-
-# Pan mask for both left and right messages
-PAN_MASK = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
-Y_MASK = [67, 16, 62, 127, 1, 37, 6, "channel", None, None, None, "Y"]
-X_MASK = [67, 16, 62, 127, 1, 37, 5, "channel", None, None, None, "X"]
-
-
-def pan_mask(data: List[int]) -> bool:
-    if len(data) != 12:
-        return False
-    # Match fixed bytes
-    if not (
-        data[0] == 67
-        and data[1] == 16
-        and data[2] == 62
-        and data[3] == 127
-        and data[4] == 1
-        and data[5] == 27
-        and data[6] == 0
-    ):
-        return False
-    channel = data[7]
-    pan = data[11]
-    return 0 <= channel <= 15 and 0 <= pan <= 127
-
-
-def y_mask(data: List[int]) -> bool:
-    if len(data) != 12:
-        return False
-    # Match fixed bytes
-    if not (
-        data[0] == 67
-        and data[1] == 16
-        and data[2] == 62
-        and data[3] == 127
-        and data[4] == 1
-        and data[5] == 37
-        and data[6] == 6
-    ):
-        return False
-    channel = data[7]
-    y = data[11]
-    return 0 <= channel <= 15 and 0 <= y <= 127
-
-def x_mask(data: List[int]) -> bool:
-    if len(data) != 12:
-        return False
-    # Match fixed bytes
-    if not (
-        data[0] == 67
-        and data[1] == 16
-        and data[2] == 62
-        and data[3] == 127
-        and data[4] == 1
-        and data[5] == 37
-        and data[6] == 5
-    ):
-        return False
-    channel = data[7]
-    x = data[11]
-    return 0 <= channel <= 15 and 0 <= x <= 127
-
-
-# Mute/unmute masks
-
-# Master mute masks (two types)
-MASTER_MUTE_MASK_1 = [67, 16, 62, 127, 1, 77, 0, None, 0, 0, 0, None]
-MASTER_MUTE_MASK_2 = [67, 16, 62, 26, 4, 94, 0, None, 0, 0, 0, None]
-
-
-def master_mute_mask_1(data: List[int]) -> bool:
-    if len(data) != len(MASTER_MUTE_MASK_1):
-        return False
-    for idx, (d, m) in enumerate(zip(data, MASTER_MUTE_MASK_1)):
-        if m is None:
-            continue
-        if d != m:
+    @staticmethod
+    def match_sysex(data: List[int], mask: List) -> bool:
+        """Generic mask matching function"""
+        if len(data) != len(mask):
             return False
-    # Mute value is in data[11]: 0 = mute, 1 = unmute
-    return True
+        for idx, (d, m) in enumerate(zip(data, mask)):
+            if m in ("channel", "x", "v", "pan", "mute", "Y", "X"):
+                continue
+            if m is None:
+                continue
+            if d != m:
+                return False
+        return True
 
+    IGNORE_MESSAGE = (67, 16, 62, 26, 127)
 
-def master_mute_mask_2(data: List[int]) -> bool:
-    if len(data) != len(MASTER_MUTE_MASK_2):
-        return False
-    for idx, (d, m) in enumerate(zip(data, MASTER_MUTE_MASK_2)):
-        if m is None:
-            continue
-        if d != m:
+    @staticmethod
+    def ignore_specific_message_mask(data: List[int]) -> bool:
+        return tuple(data) == SysexMasks.IGNORE_MESSAGE
+
+    MASTER_FADER = [67, 16, 62, 127, 1, 79, 0, "L/R", 0, 0, "u", "v"]
+
+    @staticmethod
+    def master_fader_mask(data: List[int]) -> bool:
+        if not SysexMasks.match_sysex(data, SysexMasks.MASTER_FADER):
             return False
-    return True
+        x = data[10]
+        v = data[11]
+        channel = data[7]
+        return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
 
+    CH_FADER = [67, 16, 62, 127, 1, 28, 0, "channel", 0, 0, "u", "v"]
 
-MUTE_MASK_1 = [67, 16, 62, 127, 1, 26, 0, "channel", 0, 0, 0, "mute"]
-MUTE_MASK_2 = [67, 16, 62, 26, 4, 90, 0, "channel", 0, 0, 0, "mute"]
-
-
-def match_mute_sysex(data: List[int], mask: List):
-    if len(data) != len(mask):
-        return False
-    for d, m in zip(data, mask):
-        if isinstance(m, str):
-            continue
-        if d != m:
+    @staticmethod
+    def channel_fader_mask(data: List[int]) -> bool:
+        if not SysexMasks.match_sysex(data, SysexMasks.CH_FADER):
             return False
-    return True
+        channel = data[7]
+        x = data[10]
+        v = data[11]
+        return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
 
+    PAN = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
 
-def mute_mask_1(data: List[int]) -> bool:
-    if not match_mute_sysex(data, MUTE_MASK_1):
-        return False
-    channel = data[7]
-    mute = data[11]
-    return 0 <= channel <= 15 and mute in (0, 1)
+    @staticmethod
+    def pan_mask(data: List[int]) -> bool:
+        if len(data) != 12:
+            return False
+        if not (
+            data[0] == 67
+            and data[1] == 16
+            and data[2] == 62
+            and data[3] == 127
+            and data[4] == 1
+            and data[5] == 27
+            and data[6] == 0
+        ):
+            return False
+        channel = data[7]
+        pan = data[11]
+        return 0 <= channel <= 15 and 0 <= pan <= 127
 
+    Y = [67, 16, 62, 127, 1, 37, 6, "channel", None, None, None, "Y"]
 
-def mute_mask_2(data: List[int]) -> bool:
-    if not match_mute_sysex(data, MUTE_MASK_2):
-        return False
-    channel = data[7]
-    mute = data[11]
-    return 0 <= channel <= 15 and mute in (0, 1)
+    @staticmethod
+    def y_mask(data: List[int]) -> bool:
+        if len(data) != 12:
+            return False
+        if not (
+            data[0] == 67
+            and data[1] == 16
+            and data[2] == 62
+            and data[3] == 127
+            and data[4] == 1
+            and data[5] == 37
+            and data[6] == 6
+        ):
+            return False
+        channel = data[7]
+        y = data[11]
+        return 0 <= channel <= 15 and 0 <= y <= 127
 
+    X = [67, 16, 62, 127, 1, 37, 5, "channel", None, None, None, "X"]
+
+    @staticmethod
+    def x_mask(data: List[int]) -> bool:
+        if len(data) != 12:
+            return False
+        if not (
+            data[0] == 67
+            and data[1] == 16
+            and data[2] == 62
+            and data[3] == 127
+            and data[4] == 1
+            and data[5] == 37
+            and data[6] == 5
+        ):
+            return False
+        channel = data[7]
+        x = data[11]
+        return 0 <= channel <= 15 and 0 <= x <= 127
+
+    MASTER_MUTE_1 = [67, 16, 62, 127, 1, 77, 0, None, 0, 0, 0, None]
+
+    @staticmethod
+    def master_mute_mask_1(data: List[int]) -> bool:
+        if len(data) != len(SysexMasks.MASTER_MUTE_1):
+            return False
+        for idx, (d, m) in enumerate(zip(data, SysexMasks.MASTER_MUTE_1)):
+            if m is None:
+                continue
+            if d != m:
+                return False
+        return True
+
+    MASTER_MUTE_2 = [67, 16, 62, 26, 4, 94, 0, None, 0, 0, 0, None]
+
+    @staticmethod
+    def master_mute_mask_2(data: List[int]) -> bool:
+        if len(data) != len(SysexMasks.MASTER_MUTE_2):
+            return False
+        for idx, (d, m) in enumerate(zip(data, SysexMasks.MASTER_MUTE_2)):
+            if m is None:
+                continue
+            if d != m:
+                return False
+        return True
+
+    @staticmethod
+    def match_mute_sysex(data: List[int], mask: List) -> bool:
+        if len(data) != len(mask):
+            return False
+        for d, m in zip(data, mask):
+            if isinstance(m, str):
+                continue
+            if d != m:
+                return False
+        return True
+
+    MUTE_1 = [67, 16, 62, 127, 1, 26, 0, "channel", 0, 0, 0, "mute"]
+
+    @staticmethod
+    def mute_mask_1(data: List[int]) -> bool:
+        if not SysexMasks.match_mute_sysex(data, SysexMasks.MUTE_1):
+            return False
+        channel = data[7]
+        mute = data[11]
+        return 0 <= channel <= 15 and mute in (0, 1)
+
+    MUTE_2 = [67, 16, 62, 26, 4, 90, 0, "channel", 0, 0, 0, "mute"]
+
+    @staticmethod
+    def mute_mask_2(data: List[int]) -> bool:
+        if not SysexMasks.match_mute_sysex(data, SysexMasks.MUTE_2):
+            return False
+        channel = data[7]
+        mute = data[11]
+        return 0 <= channel <= 15 and mute in (0, 1)
+
+    # EQ
+    # Band 1                                 V => 82 : Master L/R, 32 : Chan 1-16
+    #                                                V : if Master : 0/1 : L/R. If Channel : channel number
+    EQ_BAND_1_GAIN = [67, 16, 62, 127, 1, "Sel", 3, "Ch", None, None, "u", "v"]
+
+    @staticmethod
+    def eq_band_1_gain_mask(data: List[int]) -> bool:
+        if len(data) != len(SysexMasks.EQ_BAND_1_GAIN):
+            return False
+        for d, m in zip(data, SysexMasks.EQ_BAND_1_GAIN):
+            if isinstance(m, str):
+                continue
+            if d != m:
+                return False
+        channel = data[7]
+        u = data[10]
+        v = data[11]
+        selector = data[5]
+        return 0 <= channel <= 15 and 0 <= u <= 7 and 0 <= v <= 127 and selector in (82, 32)
 
 # --------------------------------- Handlers --------------------------------- #
 
 
-class Handler:
+class OSC_Handler:
     def __init__(self, osc_sender: OSCSender):
         self.osc_sender = osc_sender
 
@@ -222,11 +250,11 @@ class Handler:
         print(f"OSC sent: {osc_address} {value}")
 
 
-def ignore_specific_message_handler(data: List[int], handler: Handler):
+def ignore_specific_message_handler(data: List[int], handler: OSC_Handler):
     pass
 
 
-def fader_volume_handler(data: List[int], handler: Handler):
+def fader_volume_handler(data: List[int], handler: OSC_Handler):
     channel = data[7]
     x = data[10]
     v = data[11]
@@ -234,14 +262,14 @@ def fader_volume_handler(data: List[int], handler: Handler):
     handler.volume(channel, volume)
 
 
-def master_fader_handler(data: List[int], handler: Handler):
+def master_fader_handler(data: List[int], handler: OSC_Handler):
     x = data[10]
     v = data[11]
     volume = (x * 128 + v) / 1023.0
     handler.master_volume(volume)
 
 
-def pan_handler(data: List[int], handler: Handler):
+def pan_handler(data: List[int], handler: OSC_Handler):
     channel = data[7]
     if data[8] == 0:  # Right Pan
         pan = data[11] / 63
@@ -253,7 +281,7 @@ def pan_handler(data: List[int], handler: Handler):
     handler.pan(channel, pan)
 
 
-def y_handler(data: List[int], handler: Handler):
+def y_handler(data: List[int], handler: OSC_Handler):
     channel = data[7]
     if data[8] == 0:  # Positive Y
         y = data[11] / 63
@@ -265,7 +293,7 @@ def y_handler(data: List[int], handler: Handler):
     handler.y(channel, y)
 
 
-def x_handler(data: List[int], handler: Handler):
+def x_handler(data: List[int], handler: OSC_Handler):
     channel = data[7]
     if data[8] == 0:  # Positive X
         x = data[11] / 63
@@ -277,50 +305,52 @@ def x_handler(data: List[int], handler: Handler):
     handler.x(channel, x)
 
 
-def master_mute_handler(data: List[int], handler: Handler):
+def master_mute_handler(data: List[int], handler: OSC_Handler):
     mute_val = data[11]
     osc_mute = 0 if mute_val == 1 else 1
     handler.master_mute(osc_mute)
 
 
-def mute_handler_1(data: List[int], handler: Handler):
+def mute_handler_1(data: List[int], handler: OSC_Handler):
     channel = data[7]
     mute = data[11]
     osc_mute = 0 if mute == 1 else 1
     handler.mute(channel, osc_mute)
 
 
-def mute_handler_2(data: List[int], handler: Handler):
+def mute_handler_2(data: List[int], handler: OSC_Handler):
     channel = data[7]
     mute = data[11]
     osc_mute = 0 if mute == 1 else 1
     handler.mute(channel, osc_mute)
 
 
-def match_sysex(data: List[int], mask: List):
-    if len(data) != len(mask):
-        return False
-    for idx, (d, m) in enumerate(zip(data, mask)):
-        # Only skip fields explicitly marked as variable
-        if m in ("channel", "x", "v", "pan", "mute"):
-            continue
-        if d != m:
-            return False
-    return True
+def eq_band_1_gain_handler(data: List[int], handler: OSC_Handler):
+    if data[10] < 64:
+        value = data[10] * 127 + data[11]
+    else:
+        value = -((127 - data[10]) * 127 + (127 - data[11]))
+    # TODO scale value from -18 to 18
+
+    if data[5] == 82:  # Master
+        handler.eq(selector='master', band=1, value=value)
+    else:
+        channel = data[7]
+        handler.eq(selector='channel', channel=channel, band=1, value=value)
 
 
 class SysexDispatcher:
 
-    def __init__(self, handler: Handler):
+    def __init__(self, handler: OSC_Handler):
         self.handlers: List[
-            tuple[Callable[[List[int]], bool], Callable[[List[int], Handler], None]]
+            tuple[Callable[[List[int]], bool], Callable[[List[int], OSC_Handler], None]]
         ] = []
         self.handler = handler
 
     def add_handler(
         self,
         mask_fn: Callable[[List[int]], bool],
-        handler_fn: Callable[[List[int], Handler], None],
+        handler_fn: Callable[[List[int], OSC_Handler], None],
     ):
         self.handlers.append((mask_fn, handler_fn))
 
@@ -360,20 +390,21 @@ def main():
     OSC_IP = "192.168.1.104"
     OSC_PORT = 4003
     osc_sender = OSCSender(OSC_IP, OSC_PORT)
-    handler = Handler(osc_sender)
+    handler = OSC_Handler(osc_sender)
     dispatcher = SysexDispatcher(handler)
     dispatcher.add_handler(
-        ignore_specific_message_mask, ignore_specific_message_handler
+        SysexMasks.ignore_specific_message_mask, ignore_specific_message_handler
     )
-    dispatcher.add_handler(master_fader_mask, master_fader_handler)
-    dispatcher.add_handler(master_mute_mask_1, master_mute_handler)
-    dispatcher.add_handler(master_mute_mask_2, master_mute_handler)
-    dispatcher.add_handler(fader_volume_mask, fader_volume_handler)
-    dispatcher.add_handler(mute_mask_1, mute_handler_1)
-    dispatcher.add_handler(mute_mask_2, mute_handler_2)
-    dispatcher.add_handler(pan_mask, pan_handler)
-    dispatcher.add_handler(y_mask, y_handler)
-    dispatcher.add_handler(x_mask, x_handler)
+    dispatcher.add_handler(SysexMasks.master_fader_mask, master_fader_handler)
+    dispatcher.add_handler(SysexMasks.master_mute_mask_1, master_mute_handler)
+    dispatcher.add_handler(SysexMasks.master_mute_mask_2, master_mute_handler)
+    dispatcher.add_handler(SysexMasks.channel_fader_mask, fader_volume_handler)
+    dispatcher.add_handler(SysexMasks.mute_mask_1, mute_handler_1)
+    dispatcher.add_handler(SysexMasks.mute_mask_2, mute_handler_2)
+    dispatcher.add_handler(SysexMasks.pan_mask, pan_handler)
+    dispatcher.add_handler(SysexMasks.y_mask, y_handler)
+    dispatcher.add_handler(SysexMasks.x_mask, x_handler)
+    dispatcher.add_handler(SysexMasks.eq_band_1_gain_mask, eq_band_1_gain_handler)
 
     midi_port = select_midi_port()
     if not midi_port:
@@ -391,7 +422,9 @@ def main():
     exit_thread = threading.Thread(target=check_exit, daemon=True)
     exit_thread.start()
 
-    with mido.open_input(midi_port) as inport:  # pyright: ignore[reportAttributeAccessIssue]
+    with mido.open_input(
+        midi_port
+    ) as inport:  # pyright: ignore[reportAttributeAccessIssue]
         print(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
         for msg in inport:
             if stop_flag.is_set():
