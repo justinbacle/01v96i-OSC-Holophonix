@@ -1,6 +1,7 @@
 from typing import List, Callable
 import logging
 import mido
+import math
 from osc.osc_sender import OSCSender
 
 # ----------------------------------- Masks ---------------------------------- #
@@ -39,6 +40,8 @@ def fader_volume_mask(data: List[int]) -> bool:
 
 # Pan mask for both left and right messages
 PAN_MASK = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
+Y_MASK = [67, 16, 62, 127, 1, 37, 6, "channel", None, None, None, "Y"]
+X_MASK = [67, 16, 62, 127, 1, 37, 5, "channel", None, None, None, "X"]
 
 
 def pan_mask(data: List[int]) -> bool:
@@ -58,6 +61,43 @@ def pan_mask(data: List[int]) -> bool:
     channel = data[7]
     pan = data[11]
     return 0 <= channel <= 15 and 0 <= pan <= 127
+
+
+def y_mask(data: List[int]) -> bool:
+    if len(data) != 12:
+        return False
+    # Match fixed bytes
+    if not (
+        data[0] == 67
+        and data[1] == 16
+        and data[2] == 62
+        and data[3] == 127
+        and data[4] == 1
+        and data[5] == 37
+        and data[6] == 6
+    ):
+        return False
+    channel = data[7]
+    y = data[11]
+    return 0 <= channel <= 15 and 0 <= y <= 127
+
+def x_mask(data: List[int]) -> bool:
+    if len(data) != 12:
+        return False
+    # Match fixed bytes
+    if not (
+        data[0] == 67
+        and data[1] == 16
+        and data[2] == 62
+        and data[3] == 127
+        and data[4] == 1
+        and data[5] == 37
+        and data[6] == 5
+    ):
+        return False
+    channel = data[7]
+    x = data[11]
+    return 0 <= channel <= 15 and 0 <= x <= 127
 
 
 # Mute/unmute masks
@@ -128,11 +168,36 @@ class Handler:
     def __init__(self, osc_sender: OSCSender):
         self.osc_sender = osc_sender
 
+        # Surround mode handling
+        self.XY_SCALE = 10
+        # States to save
+        self._x = 0.0
+        self._y = 0.0
+
     def pan(self, channel: int, value: float):
         azim = value * 45  # -45.0 to 45.0
         osc_address = f"/track/{channel+1}/azim"
         self.osc_sender.send(osc_address, azim)
         print(f"OSC sent: {osc_address} {azim:.1f}")
+
+    def x(self, channel: int, value: float):
+        self._x = value * self.XY_SCALE
+        self._xy(channel)
+
+    def y(self, channel: int, value: float):
+        self._y = value * self.XY_SCALE
+        self._xy(channel)
+
+    def _xy(self, channel: int):
+        # Calculate azimuth and distance using trigonometry
+        azim = math.degrees(math.atan2(self._x, self._y))  # <-- swapped arguments
+        dist = (self._x**2 + self._y**2) ** 0.5  # Euclidean distance, normalized
+        osc_address_azim = f"/track/{channel+1}/azim"
+        osc_address_dist = f"/track/{channel+1}/dist"
+        self.osc_sender.send(osc_address_azim, azim)
+        self.osc_sender.send(osc_address_dist, dist)
+        print(f"OSC sent: {osc_address_azim} {azim:.1f}")
+        print(f"OSC sent: {osc_address_dist} {dist:.3f}")
 
     def volume(self, channel: int, value: float):
         db_value = (value * 72) - 60
@@ -186,6 +251,30 @@ def pan_handler(data: List[int], handler: Handler):
         pan = 0
         logging.warning(f"Unexpected pan value: {data[8]}")
     handler.pan(channel, pan)
+
+
+def y_handler(data: List[int], handler: Handler):
+    channel = data[7]
+    if data[8] == 0:  # Positive Y
+        y = data[11] / 63
+    elif data[8] == 127:  # Negative Y
+        y = -(1 - data[11] / 63) - 1
+    else:
+        y = 0
+        logging.warning(f"Unexpected pan value: {data[8]}")
+    handler.y(channel, y)
+
+
+def x_handler(data: List[int], handler: Handler):
+    channel = data[7]
+    if data[8] == 0:  # Positive X
+        x = data[11] / 63
+    elif data[8] == 127:  # Negative X
+        x = -(1 - data[11] / 63) - 1
+    else:
+        x = 0
+        logging.warning(f"Unexpected pan value: {data[8]}")
+    handler.x(channel, x)
 
 
 def master_mute_handler(data: List[int], handler: Handler):
@@ -283,6 +372,8 @@ def main():
     dispatcher.add_handler(mute_mask_1, mute_handler_1)
     dispatcher.add_handler(mute_mask_2, mute_handler_2)
     dispatcher.add_handler(pan_mask, pan_handler)
+    dispatcher.add_handler(y_mask, y_handler)
+    dispatcher.add_handler(x_mask, x_handler)
 
     midi_port = select_midi_port()
     if not midi_port:
