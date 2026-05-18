@@ -1,8 +1,9 @@
 from typing import List, Callable
 import argparse
 import logging
-import mido
 import math
+import mido
+from midi.midi_sysex import MidiSysexListener
 from osc.osc_sender import OSCSender
 
 # ----------------------------------- Masks ---------------------------------- #
@@ -440,10 +441,6 @@ class SysexDispatcher:
         logging.warning(f"Unhandled Sysex: {data}")
 
 
-def print_sysex(data, dispatcher):
-    dispatcher.dispatch(list(data))
-
-
 def select_midi_port():
     ports = mido.get_input_names()  # pyright: ignore[reportAttributeAccessIssue]
     if not ports:
@@ -491,27 +488,21 @@ def main():
     if not midi_port:
         return
 
-    stop_flag = threading.Event()
+    listener = MidiSysexListener(midi_port)
+    listener.add_callback(lambda data: dispatcher.dispatch(list(data)))
 
     def check_exit():
-        while not stop_flag.is_set():
-            user_input = input()
-            if user_input.strip().lower() == "q":
-                stop_flag.set()
+        while True:
+            if input().strip().lower() == "q":
+                listener.stop()
                 logging.info("Exiting Sysex listener...")
+                break
 
     exit_thread = threading.Thread(target=check_exit, daemon=True)
     exit_thread.start()
 
-    with mido.open_input(  # pyright: ignore[reportAttributeAccessIssue]
-        midi_port
-    ) as inport:
-        logging.info(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
-        for msg in inport:
-            if stop_flag.is_set():
-                break
-            if msg.type == "sysex":
-                print_sysex(msg.data, dispatcher)
+    logging.info(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
+    listener.listen()
 
 
 if __name__ == "__main__":

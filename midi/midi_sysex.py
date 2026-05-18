@@ -1,26 +1,25 @@
+import threading
 import mido
-from typing import Callable, List, Optional
+from typing import Callable, List
 
 
 class MidiSysexListener:
-    def __init__(self, port_name: str, mask_filters: Optional[List[bytes]] = None):
+    def __init__(self, port_name: str):
         self.port_name = port_name
-        self.mask_filters = mask_filters or []
         self.callbacks: List[Callable[[bytes], None]] = []
+        self._stop_flag = threading.Event()
 
     def add_callback(self, callback: Callable[[bytes], None]):
         self.callbacks.append(callback)
 
-    def _matches_mask(self, sysex: bytes) -> bool:
-        if not self.mask_filters:
-            return True
-        return any(sysex.startswith(mask) for mask in self.mask_filters)
+    def stop(self):
+        self._stop_flag.set()
 
     def listen(self):
         with mido.open_input(self.port_name) as inport:  # pyright: ignore[reportAttributeAccessIssue]
             for msg in inport:
+                if self._stop_flag.is_set():
+                    break
                 if msg.type == "sysex":
-                    data = msg.data
-                    if self._matches_mask(data):
-                        for cb in self.callbacks:
-                            cb(data)
+                    for cb in self.callbacks:
+                        cb(msg.data)
