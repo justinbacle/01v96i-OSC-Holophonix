@@ -27,6 +27,7 @@ class SysexHandler:
         return True
 
     # --- Ignore Specific Message ---
+    # The 01v96i broadcasts this SysEx frequently — can be used to auto-detect the port?
     IGNORE_MESSAGE = (67, 16, 62, 26, 127)
 
     @staticmethod
@@ -441,6 +442,9 @@ class SysexDispatcher:
         logging.warning(f"Unhandled Sysex: {data}")
 
 
+# TODO: auto-detect the 01v96i by probing each available port for SysexHandler.IGNORE_MESSAGE ?
+# which the mixer sends frequently. First port to emit it wins; fall back to interactive
+# selection if none detected within a short timeout.
 def select_midi_port():
     ports = mido.get_input_names()  # pyright: ignore[reportAttributeAccessIssue]
     if not ports:
