@@ -23,7 +23,14 @@ python3 main.py
 
 On startup you will be prompted to select a MIDI input port. Type `q` + Enter to quit.
 
-**OSC destination** is currently hardcoded at `192.168.1.104:4003` in `main.py`.
+```bash
+python3 main.py [--ip <address>] [--port <port>]
+```
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--ip` | `192.168.1.104` | OSC destination IP |
+| `--port` | `4003` | OSC destination port |
 
 ## OSC address mapping
 

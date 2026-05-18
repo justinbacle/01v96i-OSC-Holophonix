@@ -1,4 +1,5 @@
 from typing import List, Callable
+import argparse
 import logging
 import mido
 import math
@@ -464,9 +465,12 @@ def select_midi_port():
 def main():
     import threading
 
-    OSC_IP = "192.168.1.104"
-    OSC_PORT = 4003
-    osc_sender = OSCSender(OSC_IP, OSC_PORT)
+    parser = argparse.ArgumentParser(description="Yamaha 01v96i MIDI to OSC bridge")
+    parser.add_argument("--ip", default="192.168.1.104", help="OSC destination IP")
+    parser.add_argument("--port", type=int, default=4003, help="OSC destination port")
+    args = parser.parse_args()
+
+    osc_sender = OSCSender(args.ip, args.port)
     handler = OSC_Handler(osc_sender)
     dispatcher = SysexDispatcher(handler)
     dispatcher.add_handler(SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler)
