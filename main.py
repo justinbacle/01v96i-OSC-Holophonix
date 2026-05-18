@@ -16,7 +16,7 @@ class SysexHandler:
         """Generic mask matching function"""
         if len(data) != len(mask):
             return False
-        for idx, (d, m) in enumerate(zip(data, mask)):
+        for d, m in zip(data, mask):
             if isinstance(m, str):
                 continue
             if m is None:
@@ -181,7 +181,7 @@ class SysexHandler:
     def master_mute_mask_1(data: List[int]) -> bool:
         if len(data) != len(SysexHandler.MASTER_MUTE_1):
             return False
-        for idx, (d, m) in enumerate(zip(data, SysexHandler.MASTER_MUTE_1)):
+        for d, m in zip(data, SysexHandler.MASTER_MUTE_1):
             if m is None:
                 continue
             if d != m:
@@ -200,7 +200,7 @@ class SysexHandler:
     def master_mute_mask_2(data: List[int]) -> bool:
         if len(data) != len(SysexHandler.MASTER_MUTE_2):
             return False
-        for idx, (d, m) in enumerate(zip(data, SysexHandler.MASTER_MUTE_2)):
+        for d, m in zip(data, SysexHandler.MASTER_MUTE_2):
             if m is None:
                 continue
             if d != m:
@@ -341,7 +341,7 @@ class OSC_Handler:
         azim = value * 45  # -45.0 to 45.0
         osc_address = f"/track/{channel+1}/azim"
         self.osc_sender.send(osc_address, azim)
-        print(f"OSC sent: {osc_address} {azim:.1f}")
+        logging.debug(f"OSC sent: {osc_address} {azim:.1f}")
 
     def x(self, channel: int, value: float):
         self._x[channel] = value * self.XY_SCALE
@@ -360,30 +360,30 @@ class OSC_Handler:
         osc_address_dist = f"/track/{channel+1}/dist"
         self.osc_sender.send(osc_address_azim, azim)
         self.osc_sender.send(osc_address_dist, dist)
-        print(f"OSC sent: {osc_address_azim} {azim:.1f}")
-        print(f"OSC sent: {osc_address_dist} {dist:.3f}")
+        logging.debug(f"OSC sent: {osc_address_azim} {azim:.1f}")
+        logging.debug(f"OSC sent: {osc_address_dist} {dist:.3f}")
 
     def volume(self, channel: int, value: float):
         db_value = (value * 72) - 60
         osc_address = f"/track/{channel+1}/gain"
         self.osc_sender.send(osc_address, db_value)
-        print(f"OSC sent: {osc_address} {db_value:.1f}dB")
+        logging.debug(f"OSC sent: {osc_address} {db_value:.1f}dB")
 
     def master_volume(self, value: float):
         db_value = (value * 72) - 60
         osc_address = "/master/gain"
         self.osc_sender.send(osc_address, db_value)
-        print(f"OSC sent: {osc_address} {db_value:.1f}dB")
+        logging.debug(f"OSC sent: {osc_address} {db_value:.1f}dB")
 
     def mute(self, channel: int, value: int):
         osc_address = f"/track/{channel+1}/mute"
         self.osc_sender.send(osc_address, value)
-        print(f"OSC sent: {osc_address} {value}")
+        logging.debug(f"OSC sent: {osc_address} {value}")
 
     def master_mute(self, value: int):
         osc_address = "/master/mute"
         self.osc_sender.send(osc_address, value)
-        print(f"OSC sent: {osc_address} {value}")
+        logging.debug(f"OSC sent: {osc_address} {value}")
 
     def eq(
             self, selector: str, band: int,
@@ -400,21 +400,21 @@ class OSC_Handler:
             else:
                 osc_address = f"/track/{channel+1}/equalizer/filter/{band}/gain"
             self.osc_sender.send(osc_address, gain)
-            print(f"OSC sent: {osc_address} {gain}")
+            logging.debug(f"OSC sent: {osc_address} {gain}")
         if freq is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/freq"
             else:
                 osc_address = f"/track/{channel+1}/equalizer/filter/{band}/freq"
             self.osc_sender.send(osc_address, freq)
-            print(f"OSC sent: {osc_address} {freq}")
+            logging.debug(f"OSC sent: {osc_address} {freq}")
         if Q is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/q"
             else:
                 osc_address = f"/track/{channel+1}/equalizer/filter/{band}/q"
             self.osc_sender.send(osc_address, Q)
-            print(f"OSC sent: {osc_address} {Q}")
+            logging.debug(f"OSC sent: {osc_address} {Q}")
 
 
 class SysexDispatcher:
@@ -437,7 +437,7 @@ class SysexDispatcher:
             if mask_fn(data):
                 handler_fn(data, self.handler)
                 return
-        print(f"Unhandled Sysex: {data}")
+        logging.warning(f"Unhandled Sysex: {data}")
 
 
 def print_sysex(data, dispatcher):
@@ -464,6 +464,8 @@ def select_midi_port():
 
 def main():
     import threading
+
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 
     parser = argparse.ArgumentParser(description="Yamaha 01v96i MIDI to OSC bridge")
     parser.add_argument("--ip", default="192.168.1.104", help="OSC destination IP")
@@ -496,7 +498,7 @@ def main():
             user_input = input()
             if user_input.strip().lower() == "q":
                 stop_flag.set()
-                print("Exiting Sysex listener...")
+                logging.info("Exiting Sysex listener...")
 
     exit_thread = threading.Thread(target=check_exit, daemon=True)
     exit_thread.start()
@@ -504,7 +506,7 @@ def main():
     with mido.open_input(  # pyright: ignore[reportAttributeAccessIssue]
         midi_port
     ) as inport:
-        print(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
+        logging.info(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
         for msg in inport:
             if stop_flag.is_set():
                 break
