@@ -486,9 +486,7 @@ def main():
     osc_sender = OSCSender(OSC_IP, OSC_PORT)
     handler = OSC_Handler(osc_sender)
     dispatcher = SysexDispatcher(handler)
-    dispatcher.add_handler(
-        SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler
-    )
+    dispatcher.add_handler(SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler)
     dispatcher.add_handler(SysexHandler.master_fader_mask, SysexHandler.master_fader_handler)
     dispatcher.add_handler(SysexHandler.master_mute_mask_1, SysexHandler.master_mute_handler)
     dispatcher.add_handler(SysexHandler.master_mute_mask_2, SysexHandler.master_mute_handler)
