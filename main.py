@@ -400,34 +400,29 @@ class OSC_Handler:
             gain: float | None = None, freq: float | None = None, Q: float | None = None,
             channel: int | None = None
     ):
+        if selector != 'master' and channel is None:
+            logging.error("Channel must be provided for channel EQ")
+            return
+        assert channel is not None
         if gain is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/gain"
             else:
-                if channel is None:
-                    logging.error("Channel must be provided for channel EQ")
-                else:
-                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/gain"
+                osc_address = f"/track/{channel+1}/equalizer/filter/{band}/gain"
             self.osc_sender.send(osc_address, gain)
             print(f"OSC sent: {osc_address} {gain}")
         if freq is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/freq"
             else:
-                if channel is None:
-                    logging.error("Channel must be provided for channel EQ")
-                else:
-                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/freq"
+                osc_address = f"/track/{channel+1}/equalizer/filter/{band}/freq"
             self.osc_sender.send(osc_address, freq)
             print(f"OSC sent: {osc_address} {freq}")
         if Q is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/q"
             else:
-                if channel is None:
-                    logging.error("Channel must be provided for channel EQ")
-                else:
-                    osc_address = f"/track/{channel+1}/equalizer/filter/{band}/q"
+                osc_address = f"/track/{channel+1}/equalizer/filter/{band}/q"
             self.osc_sender.send(osc_address, Q)
             print(f"OSC sent: {osc_address} {Q}")
 
