@@ -207,22 +207,11 @@ class SysexHandler:
         return True
 
     # --- Channel Mute ---
-    @staticmethod
-    def match_mute_sysex(data: List[int], mask: List) -> bool:
-        if len(data) != len(mask):
-            return False
-        for d, m in zip(data, mask):
-            if isinstance(m, str):
-                continue
-            if d != m:
-                return False
-        return True
-
     MUTE_1 = [67, 16, 62, 127, 1, 26, 0, "channel", 0, 0, 0, "mute"]
 
     @staticmethod
     def mute_mask_1(data: List[int]) -> bool:
-        if not SysexHandler.match_mute_sysex(data, SysexHandler.MUTE_1):
+        if not SysexHandler.match_sysex(data, SysexHandler.MUTE_1):
             return False
         channel = data[7]
         mute = data[11]
@@ -239,7 +228,7 @@ class SysexHandler:
 
     @staticmethod
     def mute_mask_2(data: List[int]) -> bool:
-        if not SysexHandler.match_mute_sysex(data, SysexHandler.MUTE_2):
+        if not SysexHandler.match_sysex(data, SysexHandler.MUTE_2):
             return False
         channel = data[7]
         mute = data[11]
