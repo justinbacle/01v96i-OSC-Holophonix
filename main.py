@@ -343,11 +343,9 @@ class OSC_Handler:
     def __init__(self, osc_sender: OSCSender):
         self.osc_sender = osc_sender
 
-        # Surround mode handling
         self.XY_SCALE = 10
-        # States to save
-        self._x = 0.0
-        self._y = 0.0
+        self._x: dict[int, float] = {}
+        self._y: dict[int, float] = {}
 
     def pan(self, channel: int, value: float):
         azim = value * 45  # -45.0 to 45.0
@@ -356,17 +354,18 @@ class OSC_Handler:
         print(f"OSC sent: {osc_address} {azim:.1f}")
 
     def x(self, channel: int, value: float):
-        self._x = value * self.XY_SCALE
+        self._x[channel] = value * self.XY_SCALE
         self._xy(channel)
 
     def y(self, channel: int, value: float):
-        self._y = value * self.XY_SCALE
+        self._y[channel] = value * self.XY_SCALE
         self._xy(channel)
 
     def _xy(self, channel: int):
-        # Calculate azimuth and distance using trigonometry
-        azim = math.degrees(math.atan2(self._x, self._y))  # <-- swapped arguments
-        dist = (self._x**2 + self._y**2) ** 0.5  # Euclidean distance, normalized
+        x = self._x.get(channel, 0.0)
+        y = self._y.get(channel, 0.0)
+        azim = math.degrees(math.atan2(x, y))  # <-- swapped arguments
+        dist = (x**2 + y**2) ** 0.5
         osc_address_azim = f"/track/{channel+1}/azim"
         osc_address_dist = f"/track/{channel+1}/dist"
         self.osc_sender.send(osc_address_azim, azim)
