@@ -52,6 +52,7 @@ KNOWN_MESSAGES = [
     ("channel_mute_b", SysexHandler.mute_mask_2),
     ("aux_send", SysexHandler.aux_send_mask),
     ("aux_master", SysexHandler.aux_master_mask),
+    ("solo", SysexHandler.solo_mask),
     ("bus_fader", SysexHandler.bus_fader_mask),
     ("bus_on", SysexHandler.bus_on_mask),
     ("aux_on", SysexHandler.aux_on_mask),
@@ -85,6 +86,8 @@ def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
         raw = SysexHandler.decode_value(data)
         db = SysexHandler.fader_db(raw, unity_top=True)
         return label, channel, f"aux {aux}  raw={raw:5d}  ({db:+.1f} dB)"
+    if label == "solo":
+        return label, channel, f"ch{channel + 1} solo: {'ON' if data[11] else 'off'}  (param {data[6]})"
     if label in ("bus_on", "aux_on"):
         kind = "bus" if label == "bus_on" else "aux"
         return label, channel, f"{kind} {channel + 1}: {'ON' if data[11] else 'OFF'}"

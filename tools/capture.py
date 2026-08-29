@@ -56,6 +56,7 @@ KNOWN_MESSAGES: List[tuple] = [
     ("channel_mute_form_b", SysexHandler.mute_mask_2),
     ("aux_send", SysexHandler.aux_send_mask),
     ("aux_master", SysexHandler.aux_master_mask),
+    ("solo", SysexHandler.solo_mask),
     ("bus_fader", SysexHandler.bus_fader_mask),
     ("bus_on", SysexHandler.bus_on_mask),
     ("aux_on", SysexHandler.aux_on_mask),

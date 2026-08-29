@@ -98,6 +98,8 @@ class SysexHandler:
 
     @staticmethod
     def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
+        if data[7] != 0:  # B7 is the L/R slot; both carry the same value, see eq_handler
+            return
         handler.master_volume(SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True))
 
     # --- Channel Fader ---
@@ -201,6 +203,26 @@ class SysexHandler:
         # TODO: no OSC address yet — auxes are unmapped on the Holophonix side.
         logging.info(f"Aux ON: aux={data[7] + 1} on={bool(data[11])}")
 
+    # --- Solo ---
+    # Solo lives in the Setup-data address space (43 10 3E 1A 03 ...), not the edit
+    # buffer. B7 is the 0-based channel; value 1 = soloed, 0 = cleared. Params 0 and
+    # 2 track identically on every press, so one mirrors the other; only param 0 is
+    # acted on to avoid emitting the same change twice. Observed on channels 1 and 5.
+    SOLO = [67, 16, 62, 26, 3, 46, "Param", "channel", 0, 0, 0, "on"]
+
+    @staticmethod
+    def solo_mask(data: List[int]) -> bool:
+        if not SysexHandler.match_sysex(data, SysexHandler.SOLO):
+            return False
+        return 0 <= data[7] <= 15 and data[6] in (0, 2) and data[11] in (0, 1)
+
+    @staticmethod
+    def solo_handler(data: List[int], handler: 'OSC_Handler'):
+        if data[6] != 0:
+            return
+        # TODO: no OSC address yet — solo is unmapped on the Holophonix side.
+        logging.info(f"Solo: channel={data[7] + 1} soloed={bool(data[11])}")
+
     # --- Pan ---
     PAN = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
 
@@ -301,6 +323,8 @@ class SysexHandler:
 
     @staticmethod
     def master_mute_handler(data: List[int], handler: 'OSC_Handler'):
+        if data[7] != 0:  # B7 is the L/R slot; both carry the same value, see eq_handler
+            return
         mute_val = data[11]
         osc_mute = 0 if mute_val == 1 else 1
         handler.master_mute(osc_mute)
@@ -361,8 +385,9 @@ class SysexHandler:
 
     # Parameter no. -> (band, control). Bands are contiguous blocks; band 1 and
     # band 4 each carry an extra "enable" because the console repurposes their gain
-    # knob as the HPF/LPF on/off switch. Bands 2-4 observed on device via their
-    # gain parameters (7, 10, 13); the freq/Q slots follow from the block layout.
+    # knob as the HPF/LPF on/off switch when set to HPF/LPF. All observed on device
+    # except params 9 and 12 (band 3 and band 4 frequency), which sit between
+    # observed neighbours on both sides.
     EQ_PARAMS = {
         1: (1, "q"), 2: (1, "freq"), 3: (1, "gain"), 4: (1, "enable"),
         5: (2, "q"), 6: (2, "freq"), 7: (2, "gain"),
@@ -409,6 +434,11 @@ class SysexHandler:
     @staticmethod
     def eq_handler(data: List[int], handler: 'OSC_Handler'):
         if data[5] == 82:  # Master
+            # B7 is the L/R slot. The stereo EQ is linked -- both slots carry the
+            # same value on every move (100/100 pairs identical on device) -- so
+            # only the L slot is acted on, otherwise every change is sent twice.
+            if data[7] != 0:
+                return
             selector = 'master'
             channel = None
         elif data[5] == 32:  # Channel
@@ -610,6 +640,7 @@ def main():
     dispatcher.add_handler(SysexHandler.mute_mask_2, SysexHandler.mute_handler_2)
     dispatcher.add_handler(SysexHandler.aux_send_mask, SysexHandler.aux_send_handler)
     dispatcher.add_handler(SysexHandler.aux_master_mask, SysexHandler.aux_master_handler)
+    dispatcher.add_handler(SysexHandler.solo_mask, SysexHandler.solo_handler)
     dispatcher.add_handler(SysexHandler.bus_fader_mask, SysexHandler.bus_fader_handler)
     dispatcher.add_handler(SysexHandler.bus_on_mask, SysexHandler.bus_on_handler)
     dispatcher.add_handler(SysexHandler.aux_on_mask, SysexHandler.aux_on_handler)
