@@ -33,7 +33,20 @@ On startup you will be prompted to select a MIDI input port. Type `q` + Enter to
 
 The console exposes eight USB-MIDI ports; **MIDI 1** is the one to pick. It carries
 everything, while the console's configured Tx Port carries only a subset and moves if that
-setting changes (see [docs/01v96i.md](docs/01v96i.md) §0).
+setting changes.
+
+### Console settings
+
+On the console itself (full detail and rationale in
+[docs/01v96i.md](docs/01v96i.md) § Console configuration):
+
+- `MIDI` → `[F1]`: **PARAMETER CHANGE Tx = ON** (to read the console), **Rx = ON** (to
+  drive it), **ECHO = off**, and **CHANNEL Tx/Rx = 1**.
+- `MIDI` → `[F1]`: **Fader Resolution = HIGH**. On LOW the faders drop to 256 steps and
+  every dB value the bridge reports will be wrong.
+- `DIO/SETUP` → `MIDI/Host`: note which USB port is assigned to **Studio Manager** — that
+  is the port to give the bridge. It carries the full stream in both directions, and is
+  *not* the Rx/Tx PORT setting.
 
 ```bash
 python3 main.py [--ip <address>] [--port <port>]
