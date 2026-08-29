@@ -40,96 +40,75 @@ except ImportError:  # pragma: no cover
     print("mido is required: see README § Setup (venv + requirements.txt)", file=sys.stderr)
     sys.exit(1)
 
-from main import SysexHandler  # noqa: E402
-
-# Name/mask pairs come from main.py's registry, so a control added there is
-# picked up here automatically and the two can never drift.
-KNOWN_MESSAGES = [(name, mask) for name, mask, _handler in SysexHandler.REGISTRY]
+from yamaha01v96i import events as ev  # noqa: E402
+from yamaha01v96i import parser, protocol  # noqa: E402
 
 
+def channel_label(index: Optional[int]) -> str:
+    """Track index -> ch1-32 / ST1-4, matching the console's own naming."""
+    if index is None:
+        return ""
+    if index < protocol.MONO_CHANNELS:
+        return f"ch{index + 1}"
+    return f"ST{index - protocol.MONO_CHANNELS + 1}"
 
 
-def channel_label(b7: Optional[int]) -> str:
-    """Human label for a channel byte: ch1-16, ST1-4, and ST1R.. for the linked R slots."""
-    if b7 is None:
-        return "   "
-    if 0 <= b7 < SysexHandler.MONO_CHANNELS:
-        return f"ch{b7 + 1}"
-    offset = b7 - SysexHandler.ST_IN_FIRST
-    if 0 <= offset < SysexHandler.ST_IN_COUNT * 2:
-        return f"ST{offset // 2 + 1}" + ("R" if offset % 2 else "")
-    return f"b7={b7}"
+def describe(event: ev.MixerEvent) -> Tuple[str, Optional[int], str]:
+    """Return (label, channel index, human-readable value) for one event."""
+    raw = list(event.raw)
+    name = parser.identify(raw) or "?"
+
+    if isinstance(event, ev.Keepalive):
+        return "keepalive", None, ""
+    if isinstance(event, ev.ConsoleStatus):
+        return event.kind, None, f"param {event.param} = {event.value}"
+    if isinstance(event, ev.FaderMoved):
+        return name, event.channel, f"raw={protocol.decode_value(raw):5d}  ({event.db:+.1f} dB)"
+    if isinstance(event, ev.MasterFaderMoved):
+        return name, None, f"raw={protocol.decode_value(raw):5d}  ({event.db:+.1f} dB)"
+    if isinstance(event, ev.AuxSendMoved):
+        return name, event.channel, f"aux {event.aux}  ({event.db:+.1f} dB)"
+    if isinstance(event, ev.AuxMasterMoved):
+        return name, None, f"aux {event.aux} master  ({event.db:+.1f} dB)"
+    if isinstance(event, ev.BusFaderMoved):
+        return name, None, f"bus {event.bus}  ({event.db:+.1f} dB)"
+    if isinstance(event, ev.MuteChanged):
+        return name, event.channel, "MUTED" if event.muted else "ON (unmuted)"
+    if isinstance(event, ev.MasterMuteChanged):
+        return name, None, "MUTED" if event.muted else "ON (unmuted)"
+    if isinstance(event, ev.BusOnChanged):
+        return name, None, f"bus {event.bus}: {'ON' if event.on else 'OFF'}"
+    if isinstance(event, ev.AuxOnChanged):
+        return name, None, f"aux {event.aux}: {'ON' if event.on else 'OFF'}"
+    if isinstance(event, ev.PanMoved):
+        return name, event.channel, f"{protocol.decode_value(raw):+4d} / 63  ({event.value:+.3f})"
+    if isinstance(event, ev.SurroundMoved):
+        return name, event.channel, f"{event.axis.upper()} {protocol.decode_value(raw):+4d} / 63"
+    if isinstance(event, ev.SoloChanged):
+        return name, event.channel, "SOLO" if event.soloed else "solo off"
+    if isinstance(event, ev.EqChanged):
+        who = "master" if event.selector == "master" else channel_label(event.channel)
+        if event.gain_db is not None:
+            return name, event.channel, f"{who} b{event.band} gain: {event.gain_db:+.1f} dB"
+        if event.freq_hz is not None:
+            return name, event.channel, f"{who} b{event.band} freq: {event.freq_hz:.0f} Hz"
+        if event.q is not None:
+            return name, event.channel, f"{who} b{event.band} Q: {event.q:.2f}"
+        if event.filter_type is not None:
+            return name, event.channel, f"{who} b{event.band} type: {event.filter_type}"
+        return name, event.channel, f"{who} b{event.band} filter: {'ON' if event.enabled else 'OFF'}"
+    return name, None, ""
 
 
 def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
-    """Return (label, channel, human-readable value) for one SysEx payload."""
-    label = "UNKNOWN"
-    for name, mask_fn in KNOWN_MESSAGES:
-        if mask_fn(data):
-            label = name
-            break
-
-    if label == "keepalive":
-        return label, None, ""
-    if label == "UNKNOWN":
+    """Describe a raw payload, flagging anything the parser does not recognise."""
+    event = parser.parse(data)
+    if event is None:
         if len(data) >= 12:
-            return label, data[7], f"sel={data[5]:#04x} param={data[6]} u={data[10]} v={data[11]}"
-        return label, None, ""
-
-    channel = data[7]
-
-    if label == "aux_send":
-        aux = SysexHandler.AUX_SEND_PARAMS[data[6]]
-        raw = SysexHandler.decode_value(data)
-        db = SysexHandler.fader_db(raw, unity_top=True)
-        return label, channel, f"aux {aux}  raw={raw:5d}  ({db:+.1f} dB)"
-    if label == "eq_band_select":
-        return label, None, f"console selected EQ band {data[11] + 1}"
-    if label in ("solo_status", "console_state"):
-        return label, None, f"param {data[6]} = {data[11]}   (unmapped console status)"
-    if label == "solo":
-        return label, channel, f"{channel_label(channel)} solo: {'ON' if data[11] else 'off'}  (param {data[6]})"
-    if label in ("bus_on", "aux_on"):
-        kind = "bus" if label == "bus_on" else "aux"
-        return label, channel, f"{kind} {channel + 1}: {'ON' if data[11] else 'OFF'}"
-    if label == "bus_fader":
-        raw = SysexHandler.decode_value(data)
-        db = SysexHandler.fader_db(raw, unity_top=True)
-        return label, channel, f"bus {channel + 1}  raw={raw:5d}  ({db:+.1f} dB)"
-    if label == "aux_master":
-        raw = SysexHandler.decode_value(data)
-        db = SysexHandler.fader_db(raw, unity_top=True)
-        return label, channel, f"aux {channel + 1} master  raw={raw:5d}  ({db:+.1f} dB)"
-    if label in ("channel_fader", "master_fader"):
-        raw = SysexHandler.decode_value(data)
-        db = SysexHandler.fader_db(raw, unity_top=(label == "master_fader"))
-        shown = "-inf" if raw <= 0 else f"{db:+.1f} dB"
-        return label, channel, f"raw={raw:5d}  ({shown})"
-    if label.startswith(("channel_mute", "master_mute")):
-        return label, channel, "ON (unmuted)" if data[11] == 1 else "MUTED"
-    if label in ("pan", "surround_x", "surround_y"):
-        value = SysexHandler.decode_value(data)
-        return label, channel, f"{value:+4d} / 63  ({value / 63:+.3f})"
-    if label == "eq":
-        who = "master" if data[5] == 82 else channel_label(channel)
-        band, control = SysexHandler.EQ_PARAMS[data[6]]
-        param = f"b{band} {control}"
-        if control == "gain":
-            raw = SysexHandler.decode_value(data)
-            return label, channel, f"{who} {param}: raw={raw:+5d} ({raw / 10:+.1f} dB)"
-        if control == "freq":
-            v = data[11]
-            freq = 21.2 * ((20000 / 21.2) ** ((v - 5) / (124 - 5)))
-            return label, channel, f"{who} {param}: v={v:3d} ({freq:.0f} Hz)"
-        raw = SysexHandler.decode_value(data)
-        if control == "enable":
-            return label, channel, f"{who} {param}: {'ON' if raw else 'OFF'}"
-        kind = SysexHandler.EQ_TYPE_CODES.get(raw, "Bell")
-        if kind == "Bell":
-            q = 10 * (0.1 / 10) ** (raw / 40)
-            return label, channel, f"{who} {param}: raw={raw:3d} (Bell  Q={q:.2f})"
-        return label, channel, f"{who} {param}: raw={raw:3d} ({kind})"
-    return label, channel, ""
+            return "UNKNOWN", None, (f"sel={data[5]:#04x} param={data[6]} "
+                                     f"ch={data[7]} value={protocol.decode_value(data)}")
+        return "UNKNOWN", None, " ".join(f"{b:02X}" for b in data)
+    return describe(event)
 
 
 class MonitorState:
@@ -165,14 +144,19 @@ class MonitorState:
                 }
             )
 
-        if label in ("channel_fader", "pan", "surround_x", "surround_y") or label.startswith("channel_mute"):
-            if channel is not None:
-                self.channels.setdefault(channel, {})[label] = value
+        if label == "eq":
+            event = parser.parse(data)
+            if isinstance(event, ev.EqChanged):
+                who = "master" if event.selector == "master" else channel_label(event.channel)
+                control = next(
+                    (k for k, v in (("gain", event.gain_db), ("freq", event.freq_hz),
+                                    ("Q", event.q), ("type", event.filter_type),
+                                    ("filter", event.enabled)) if v is not None), "?")
+                self.eq[f"{who} b{event.band} {control}"] = value
         elif label.startswith("master"):
             self.master[label] = value
-        elif label == "eq_band_1":
-            who = "master" if data[5] == 82 else f"ch{data[7] + 1}"
-            self.eq[f"{who} {EQ_PARAM_NAMES.get(data[6], data[6])}"] = value
+        elif channel is not None:
+            self.channels.setdefault(channel, {})[label] = value
         return {"label": label, "channel": channel, "value": value}
 
 

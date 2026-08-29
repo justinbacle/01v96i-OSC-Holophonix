@@ -41,25 +41,15 @@ except ImportError:  # pragma: no cover
     print("mido is required: see README § Setup (venv + requirements.txt)", file=sys.stderr)
     sys.exit(1)
 
-# Reuse the masks from main.py so this tool can never drift from the bridge.
-# (After the refactor, import from yamaha01v96i instead — see docs/refactor-plan.md.)
-from main import SysexHandler  # noqa: E402
-
-# Same order as the dispatcher registration in main.main() — first match wins.
-# Name/mask pairs come from main.py's registry, so a control added there is
-# picked up here automatically and the two can never drift.
-KNOWN_MESSAGES = [(name, mask) for name, mask, _handler in SysexHandler.REGISTRY]
+from yamaha01v96i import identify  # noqa: E402
 
 
 def annotate(data: List[int]) -> Optional[str]:
     """Return the control name for a known SysEx payload, else None."""
-    for name, mask_fn in KNOWN_MESSAGES:
-        try:
-            if mask_fn(list(data)):
-                return name
-        except Exception:  # masks should be total, but never crash the capture
-            continue
-    return None
+    try:
+        return identify(list(data))
+    except Exception:  # never let a decode bug kill a capture session
+        return None
 
 
 def format_hex(data: List[int]) -> str:

@@ -102,13 +102,19 @@ undecided (see [docs/01v96i.md](docs/01v96i.md) §5.2):
 ## Project structure
 
 ```text
-main.py                    # Application entry point; all MIDI→OSC logic
-osc/osc_sender.py          # Thin UDP wrapper around python-osc
+main.py                    # CLI and wiring only
+yamaha01v96i/              # The 01V96i protocol API - no MIDI or OSC dependencies
+    protocol.py            #   framing, value encoding, fader laws, EQ tables
+    events.py              #   semantic events backends consume
+    parser.py              #   message table; raw SysEx -> events
+backends/holophonix.py     # Holophonix OSC addresses (the only place they live)
+midi/ports.py              # Port listing, selection, keepalive detection
 midi/midi_sysex.py         # MIDI SysEx listener used by the run loop
+osc/osc_sender.py          # Thin UDP wrapper around python-osc
 tools/monitor.py           # Live TUI: decodes the console's SysEx as you move controls
 tools/capture.py           # Bulk MIDI capture & annotation logger
 tools/osc_dump.py          # Stand-in OSC receiver for testing without Holophonix
-tests/                     # Unit tests (run without MIDI hardware)
+tests/                     # Unit tests + golden OSC snapshot (no MIDI hardware needed)
 docs/01v96i.md             # Reverse-engineered 01V96i SysEx reference (authoritative)
 docs/refactor-plan.md      # Refactor plan: reusable 01v96i API + pluggable backends
 requirements.txt

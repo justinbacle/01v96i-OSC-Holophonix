@@ -17,7 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from main import OSC_Handler, SysexDispatcher, SysexHandler  # noqa: E402
+from backends.holophonix import HolophonixBackend  # noqa: E402
+from yamaha01v96i import parse  # noqa: E402
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "captured_messages.json"
 SNAPSHOT = REPO_ROOT / "tests" / "fixtures" / "golden_osc.json"
@@ -34,19 +35,13 @@ class RecordingSender:
         self.calls.append([address, *rounded])
 
 
-def build_dispatcher(sender: RecordingSender) -> SysexDispatcher:
-    """Mirror main.main()'s handler registration order."""
-    dispatcher = SysexDispatcher(OSC_Handler(sender))
-    for _name, mask, handler in SysexHandler.REGISTRY:
-        dispatcher.add_handler(mask, handler)
-    return dispatcher
-
-
 def run_all(messages: List[List[int]]) -> List[Any]:
     sender = RecordingSender()
-    dispatcher = build_dispatcher(sender)
+    backend = HolophonixBackend(sender)
     for data in messages:
-        dispatcher.dispatch(data)
+        event = parse(data)
+        if event is not None:
+            backend.handle(event)
     return sender.calls
 
 
