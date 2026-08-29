@@ -60,6 +60,8 @@ def describe(event: ev.MixerEvent) -> Tuple[str, Optional[int], str]:
 
     if isinstance(event, ev.Keepalive):
         return "keepalive", None, ""
+    if isinstance(event, ev.Ignored):
+        return name, None, f"(ignored: {event.reason})"
     if isinstance(event, ev.ConsoleStatus):
         return event.kind, None, f"param {event.param} = {event.value}"
     if isinstance(event, ev.FaderMoved):
@@ -87,7 +89,9 @@ def describe(event: ev.MixerEvent) -> Tuple[str, Optional[int], str]:
     if isinstance(event, ev.SoloChanged):
         return name, event.channel, "SOLO" if event.soloed else "solo off"
     if isinstance(event, ev.EqChanged):
-        who = "master" if event.selector == "master" else channel_label(event.channel)
+        who = {"master": "master",
+               "aux": f"aux{(event.channel or 0) + 1}"}.get(
+            event.selector, channel_label(event.channel))
         if event.gain_db is not None:
             return name, event.channel, f"{who} b{event.band} gain: {event.gain_db:+.1f} dB"
         if event.freq_hz is not None:

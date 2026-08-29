@@ -38,6 +38,11 @@ class HolophonixBackend:
         base = "/master" if event.selector == "master" else self._track(event.channel)
         return f"{base}/equalizer/filter/{event.band}/{leaf}"
 
+    @staticmethod
+    def _is_unmapped_eq(event: ev.EqChanged) -> bool:
+        # Aux EQ has no Holophonix equivalent yet.
+        return event.selector == "aux"
+
     # --- event handling ----------------------------------------------------- #
 
     def handle(self, event: ev.MixerEvent) -> None:
@@ -72,6 +77,10 @@ class HolophonixBackend:
         self._send(f"{self._track(e.channel)}/dist", dist, ".3f")
 
     def _on_eq(self, e: ev.EqChanged) -> None:
+        if self._is_unmapped_eq(e):
+            logging.info(f"Aux EQ: aux={e.channel + 1} band={e.band} "
+                         f"gain={e.gain_db} freq={e.freq_hz} q={e.q} type={e.filter_type}")
+            return
         if e.gain_db is not None:
             self._send(self._eq_address(e, "gain"), e.gain_db)
         elif e.freq_hz is not None:
@@ -125,4 +134,5 @@ class HolophonixBackend:
         ev.SoloChanged: _on_solo,
         ev.ConsoleStatus: _on_status,
         ev.Keepalive: lambda self, e: None,
+        ev.Ignored: lambda self, e: None,
     }

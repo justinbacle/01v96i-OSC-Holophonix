@@ -38,6 +38,7 @@ EL_SETUP_FLAG = 0x2F
 EL_SOLO_STATUS = 0x30
 EL_AUX_ON = 0x36
 EL_AUX_FADER = 0x39
+EL_AUX_EQ = 0x3C
 EL_EQ_BAND_SELECT = 0x4C
 EL_MASTER_ON = 0x4D
 EL_MASTER_FADER = 0x4F
@@ -64,6 +65,11 @@ def _channel(data: List[int]) -> Optional[int]:
     return p.channel_index(data[7])
 
 
+def _linked_slot(data: List[int]) -> ev.Ignored:
+    """The right-hand slot of a linked stereo pair, carrying a duplicate value."""
+    return ev.Ignored(tuple(data), "linked stereo slot")
+
+
 # --- Factories: payload -> event, or None to drop the message ---------------- #
 
 def _keepalive(data):
@@ -72,20 +78,22 @@ def _keepalive(data):
 
 def _channel_fader(data):
     ch = _channel(data)
-    return None if ch is None else ev.FaderMoved(tuple(data), ch, p.fader_db(p.decode_value(data)))
+    if ch is None:
+        return _linked_slot(data)
+    return ev.FaderMoved(tuple(data), ch, p.fader_db(p.decode_value(data)))
 
 
 def _master_fader(data):
     # B7 is the L/R slot; both carry the same value, so only L is acted on.
     if data[7] != 0:
-        return None
+        return _linked_slot(data)
     return ev.MasterFaderMoved(tuple(data), p.fader_db(p.decode_value(data), unity_top=True))
 
 
 def _aux_send(data):
     ch = _channel(data)
     if ch is None:
-        return None
+        return _linked_slot(data)
     return ev.AuxSendMoved(tuple(data), AUX_SEND_PARAMS[data[6]], ch,
                            p.fader_db(p.decode_value(data), unity_top=True))
 
@@ -102,12 +110,14 @@ def _bus_fader(data):
 
 def _mute(data):
     ch = _channel(data)
-    return None if ch is None else ev.MuteChanged(tuple(data), ch, data[11] == 0)
+    if ch is None:
+        return _linked_slot(data)
+    return ev.MuteChanged(tuple(data), ch, data[11] == 0)
 
 
 def _master_mute(data):
-    if data[7] not in (0, None) and data[7] != 0:
-        return None
+    if data[7] != 0:
+        return _linked_slot(data)
     return ev.MasterMuteChanged(tuple(data), data[11] == 0)
 
 
@@ -121,13 +131,15 @@ def _aux_on(data):
 
 def _pan(data):
     ch = _channel(data)
-    return None if ch is None else ev.PanMoved(tuple(data), ch, p.decode_value(data) / p.PAN_MAX)
+    if ch is None:
+        return _linked_slot(data)
+    return ev.PanMoved(tuple(data), ch, p.decode_value(data) / p.PAN_MAX)
 
 
 def _surround(data):
     ch = _channel(data)
     if ch is None:
-        return None
+        return _linked_slot(data)
     return ev.SurroundMoved(tuple(data), ch, SURROUND_AXES[data[6]],
                             p.decode_value(data) / p.PAN_MAX)
 
@@ -135,20 +147,25 @@ def _surround(data):
 def _solo(data):
     # Params 0 and 2 mirror each other on every press; act on one only.
     ch = _channel(data)
-    if ch is None or data[6] != 0:
-        return None
+    if ch is None:
+        return _linked_slot(data)
+    if data[6] != 0:
+        return ev.Ignored(tuple(data), "solo mirror parameter")
     return ev.SoloChanged(tuple(data), ch, bool(data[11]))
 
 
 def _eq(data):
+    # Three EQ elements share one parameter layout: channel, aux and master.
     if data[5] == EL_MASTER_EQ:
         if data[7] != 0:      # L/R slot, linked -- act on L only
-            return None
+            return _linked_slot(data)
         selector, channel = "master", None
+    elif data[5] == EL_AUX_EQ:
+        selector, channel = "aux", data[7]
     else:
         selector, channel = "channel", _channel(data)
         if channel is None:
-            return None
+            return _linked_slot(data)
     band, control = p.EQ_PARAMS[data[6]]
     raw = p.decode_value(data)
     if control == "gain":
@@ -218,8 +235,8 @@ MESSAGES = [
     ("surround_x", FORM_A + [EL_SURROUND, 5, _, _, _, _, _],
      lambda d: p.is_channel_byte(d[7]), _surround),
     ("eq", FORM_A + [_, _, _, _, _, _, _],
-     lambda d: d[5] in (EL_CH_EQ, EL_MASTER_EQ) and d[6] in p.EQ_PARAMS
-     and p.is_channel_byte(d[7]), _eq),
+     lambda d: d[5] in (EL_CH_EQ, EL_AUX_EQ, EL_MASTER_EQ) and d[6] in p.EQ_PARAMS
+     and (p.is_channel_byte(d[7]) if d[5] == EL_CH_EQ else 0 <= d[7] <= 7), _eq),
 ]
 
 

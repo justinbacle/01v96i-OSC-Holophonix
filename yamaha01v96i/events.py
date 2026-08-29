@@ -21,6 +21,17 @@ class Keepalive(MixerEvent):
 
 
 @dataclass(frozen=True)
+class Ignored(MixerEvent):
+    """A recognised message deliberately not acted on.
+
+    The console emits genuine duplicates -- both slots of a linked stereo pair,
+    and solo's mirrored parameter -- so one copy is dropped. Distinct from an
+    unrecognised message, which the parser reports by returning None.
+    """
+    reason: str
+
+
+@dataclass(frozen=True)
 class ConsoleStatus(MixerEvent):
     """A console-side status message with no control semantics (docs/01v96i.md §8)."""
     kind: str
@@ -103,8 +114,8 @@ class SoloChanged(MixerEvent):
 @dataclass(frozen=True)
 class EqChanged(MixerEvent):
     """One EQ parameter. Exactly one of the value fields is set."""
-    selector: str                     # "channel" or "master"
-    channel: Optional[int]            # None for master
+    selector: str                     # "channel", "aux" or "master"
+    channel: Optional[int]            # 0-based channel or aux index; None for master
     band: int                         # 1..4, the console's band number
     gain_db: Optional[float] = None
     freq_hz: Optional[float] = None
