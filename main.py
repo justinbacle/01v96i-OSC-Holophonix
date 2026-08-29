@@ -71,13 +71,14 @@ class SysexHandler:
         (1023, 10.0),   # measured
     ]
 
-    # The stereo fader spans the same travel but ends at unity instead of +10.
-    MASTER_FADER_LAW = [(raw, db - 10.0) for raw, db in FADER_LAW]
+    # Stereo, aux masters and aux sends span the same travel but end at unity
+    # instead of +10 dB, confirmed on device.
+    FADER_LAW_UNITY = [(raw, db - 10.0) for raw, db in FADER_LAW]
 
     @staticmethod
-    def fader_db(raw: int, master: bool = False) -> float:
-        """Convert a fader position index to dB via the interpolated fader law."""
-        law = SysexHandler.MASTER_FADER_LAW if master else SysexHandler.FADER_LAW
+    def fader_db(raw: int, unity_top: bool = False) -> float:
+        """Convert a fader position index to dB; unity_top for faders ending at 0 dB."""
+        law = SysexHandler.FADER_LAW_UNITY if unity_top else SysexHandler.FADER_LAW
         raw = max(law[0][0], min(law[-1][0], raw))
         for (r0, d0), (r1, d1) in zip(law, law[1:]):
             if raw <= r1:
@@ -97,7 +98,7 @@ class SysexHandler:
 
     @staticmethod
     def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
-        handler.master_volume(SysexHandler.fader_db(SysexHandler.decode_value(data), master=True))
+        handler.master_volume(SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True))
 
     # --- Channel Fader ---
     CH_FADER = [67, 16, 62, 127, 1, 28, 0, "channel", None, None, "u", "v"]
@@ -113,6 +114,92 @@ class SysexHandler:
     def channel_fader_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
         handler.volume(channel, SysexHandler.fader_db(SysexHandler.decode_value(data)))
+
+    # --- Aux Send Fader ---
+    # On an AUX layer the channel faders become sends to that aux. The aux number is
+    # carried in the Parameter no. as 3*aux - 1 (aux 1 -> 2, aux 2 -> 5, ...);
+    # observed for aux 1 on channels 1, 7 and 13.
+    AUX_SEND = [67, 16, 62, 127, 1, 35, "Param", "channel", None, None, "u", "v"]
+    AUX_SEND_PARAMS = {3 * aux - 1: aux for aux in range(1, 9)}
+
+    @staticmethod
+    def aux_send_mask(data: List[int]) -> bool:
+        if not SysexHandler.match_sysex(data, SysexHandler.AUX_SEND):
+            return False
+        return 0 <= data[7] <= 15 and data[6] in SysexHandler.AUX_SEND_PARAMS
+
+    @staticmethod
+    def aux_send_handler(data: List[int], handler: 'OSC_Handler'):
+        aux = SysexHandler.AUX_SEND_PARAMS[data[6]]
+        channel = data[7]
+        db = SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True)
+        # TODO: no OSC address yet — aux sends are unmapped on the Holophonix side.
+        logging.info(f"Aux send: aux={aux} channel={channel + 1} {db:+.1f} dB")
+
+    # --- Aux Master Fader ---
+    # Aux masters live on their own element; B7 is the 0-based aux number.
+    # Observed for aux 1 and aux 7. Tops out at unity like the stereo fader.
+    AUX_MASTER = [67, 16, 62, 127, 1, 57, 0, "aux", None, None, "u", "v"]
+
+    @staticmethod
+    def aux_master_mask(data: List[int]) -> bool:
+        if not SysexHandler.match_sysex(data, SysexHandler.AUX_MASTER):
+            return False
+        return 0 <= data[7] <= 7
+
+    @staticmethod
+    def aux_master_handler(data: List[int], handler: 'OSC_Handler'):
+        db = SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True)
+        # TODO: no OSC address yet — aux masters are unmapped on the Holophonix side.
+        logging.info(f"Aux master: aux={data[7] + 1} {db:+.1f} dB")
+
+    # --- Bus Fader ---
+    # B7 is the 0-based bus number; observed for bus 1 and bus 5.
+    BUS_FADER = [67, 16, 62, 127, 1, 43, 0, "bus", None, None, "u", "v"]
+
+    @staticmethod
+    def bus_fader_mask(data: List[int]) -> bool:
+        if not SysexHandler.match_sysex(data, SysexHandler.BUS_FADER):
+            return False
+        return 0 <= data[7] <= 7
+
+    @staticmethod
+    def bus_fader_handler(data: List[int], handler: 'OSC_Handler'):
+        db = SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True)
+        # TODO: no OSC address yet — buses are unmapped on the Holophonix side.
+        logging.info(f"Bus fader: bus={data[7] + 1} {db:+.1f} dB")
+
+    # --- Bus / Aux ON ---
+    # Same shape as the channel mute: value 1 = on (unmuted), 0 = off. Each is
+    # mirrored into backup memory as a Form B message (see BUS_ON_B / AUX_ON_B).
+    BUS_ON = [67, 16, 62, 127, 1, 41, 0, "bus", 0, 0, 0, "on"]
+    AUX_ON = [67, 16, 62, 127, 1, 54, 0, "aux", 0, 0, 0, "on"]
+    BUS_ON_B = [67, 16, 62, 26, 4, 91, 0, "bus", 0, 0, 0, "on"]
+    AUX_ON_B = [67, 16, 62, 26, 4, 92, 0, "aux", 0, 0, 0, "on"]
+
+    @staticmethod
+    def _on_mask(data: List[int], template: List) -> bool:
+        return SysexHandler.match_sysex(data, template) and 0 <= data[7] <= 7 and data[11] in (0, 1)
+
+    @staticmethod
+    def bus_on_mask(data: List[int]) -> bool:
+        return (SysexHandler._on_mask(data, SysexHandler.BUS_ON)
+                or SysexHandler._on_mask(data, SysexHandler.BUS_ON_B))
+
+    @staticmethod
+    def aux_on_mask(data: List[int]) -> bool:
+        return (SysexHandler._on_mask(data, SysexHandler.AUX_ON)
+                or SysexHandler._on_mask(data, SysexHandler.AUX_ON_B))
+
+    @staticmethod
+    def bus_on_handler(data: List[int], handler: 'OSC_Handler'):
+        # TODO: no OSC address yet — buses are unmapped on the Holophonix side.
+        logging.info(f"Bus ON: bus={data[7] + 1} on={bool(data[11])}")
+
+    @staticmethod
+    def aux_on_handler(data: List[int], handler: 'OSC_Handler'):
+        # TODO: no OSC address yet — auxes are unmapped on the Holophonix side.
+        logging.info(f"Aux ON: aux={data[7] + 1} on={bool(data[11])}")
 
     # --- Pan ---
     PAN = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
@@ -521,6 +608,11 @@ def main():
     dispatcher.add_handler(SysexHandler.channel_fader_mask, SysexHandler.channel_fader_handler)
     dispatcher.add_handler(SysexHandler.mute_mask_1, SysexHandler.mute_handler_1)
     dispatcher.add_handler(SysexHandler.mute_mask_2, SysexHandler.mute_handler_2)
+    dispatcher.add_handler(SysexHandler.aux_send_mask, SysexHandler.aux_send_handler)
+    dispatcher.add_handler(SysexHandler.aux_master_mask, SysexHandler.aux_master_handler)
+    dispatcher.add_handler(SysexHandler.bus_fader_mask, SysexHandler.bus_fader_handler)
+    dispatcher.add_handler(SysexHandler.bus_on_mask, SysexHandler.bus_on_handler)
+    dispatcher.add_handler(SysexHandler.aux_on_mask, SysexHandler.aux_on_handler)
     dispatcher.add_handler(SysexHandler.pan_mask, SysexHandler.pan_handler)
     dispatcher.add_handler(SysexHandler.y_mask, SysexHandler.y_handler)
     dispatcher.add_handler(SysexHandler.x_mask, SysexHandler.x_handler)

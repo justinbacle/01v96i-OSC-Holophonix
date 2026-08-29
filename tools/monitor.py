@@ -50,6 +50,11 @@ KNOWN_MESSAGES = [
     ("channel_fader", SysexHandler.channel_fader_mask),
     ("channel_mute_a", SysexHandler.mute_mask_1),
     ("channel_mute_b", SysexHandler.mute_mask_2),
+    ("aux_send", SysexHandler.aux_send_mask),
+    ("aux_master", SysexHandler.aux_master_mask),
+    ("bus_fader", SysexHandler.bus_fader_mask),
+    ("bus_on", SysexHandler.bus_on_mask),
+    ("aux_on", SysexHandler.aux_on_mask),
     ("pan", SysexHandler.pan_mask),
     ("surround_y", SysexHandler.y_mask),
     ("surround_x", SysexHandler.x_mask),
@@ -75,9 +80,25 @@ def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
         return label, None, ""
 
     channel = data[7]
+    if label == "aux_send":
+        aux = SysexHandler.AUX_SEND_PARAMS[data[6]]
+        raw = SysexHandler.decode_value(data)
+        db = SysexHandler.fader_db(raw, unity_top=True)
+        return label, channel, f"aux {aux}  raw={raw:5d}  ({db:+.1f} dB)"
+    if label in ("bus_on", "aux_on"):
+        kind = "bus" if label == "bus_on" else "aux"
+        return label, channel, f"{kind} {channel + 1}: {'ON' if data[11] else 'OFF'}"
+    if label == "bus_fader":
+        raw = SysexHandler.decode_value(data)
+        db = SysexHandler.fader_db(raw, unity_top=True)
+        return label, channel, f"bus {channel + 1}  raw={raw:5d}  ({db:+.1f} dB)"
+    if label == "aux_master":
+        raw = SysexHandler.decode_value(data)
+        db = SysexHandler.fader_db(raw, unity_top=True)
+        return label, channel, f"aux {channel + 1} master  raw={raw:5d}  ({db:+.1f} dB)"
     if label in ("channel_fader", "master_fader"):
         raw = SysexHandler.decode_value(data)
-        db = SysexHandler.fader_db(raw, master=(label == "master_fader"))
+        db = SysexHandler.fader_db(raw, unity_top=(label == "master_fader"))
         shown = "-inf" if raw <= 0 else f"{db:+.1f} dB"
         return label, channel, f"raw={raw:5d}  ({shown})"
     if label.startswith(("channel_mute", "master_mute")):
