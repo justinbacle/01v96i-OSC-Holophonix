@@ -21,7 +21,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Yamaha 01v96i MIDI to OSC bridge")
     parser.add_argument("--ip", default="192.168.1.104", help="OSC destination IP")
     parser.add_argument("--port", type=int, default=4003, help="OSC destination port")
-    parser.add_argument("--midi-port", help="MIDI input port name (skips the prompt)")
+    parser.add_argument("--midi-in", help="MIDI input port: the console's Tx PORT "
+                                          "(substring match; skips the prompt)")
+    parser.add_argument("--midi-out", help="MIDI output port: the console's Rx PORT "
+                                           "(substring match; enables sending)")
     parser.add_argument("-v", "--verbose", action="store_true", help="log every OSC send")
     return parser
 
@@ -33,7 +36,7 @@ def main() -> int:
 
     backend = HolophonixBackend(OSCSender(args.ip, args.port))
 
-    midi_port = args.midi_port or ports.select_interactively()
+    midi_port = ports.resolve_input(args.midi_in) or ports.select_interactively()
     if not midi_port:
         return 1
 

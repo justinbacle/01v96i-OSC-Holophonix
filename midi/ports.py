@@ -18,6 +18,29 @@ def console_ports() -> List[str]:
     return [p for p in input_names() if "01V96i" in p]
 
 
+def output_names() -> List[str]:
+    return list(mido.get_output_names())  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _resolve(names: List[str], wanted: Optional[str]) -> Optional[str]:
+    if not wanted:
+        return None
+    matches = [n for n in names if wanted.lower() in n.lower()]
+    if not matches:
+        raise SystemExit(f"No MIDI port matching {wanted!r}.\nAvailable:\n  " + "\n  ".join(names))
+    return matches[0]
+
+
+def resolve_input(wanted: Optional[str]) -> Optional[str]:
+    """Resolve an input port by substring, e.g. "MIDI 5" for the console's Tx PORT."""
+    return _resolve(input_names(), wanted)
+
+
+def resolve_output(wanted: Optional[str]) -> Optional[str]:
+    """Resolve an output port by substring, e.g. "MIDI 4" for the console's Rx PORT."""
+    return _resolve(output_names(), wanted)
+
+
 def select_interactively() -> Optional[str]:
     """Prompt for a port. Returns None if there are none or the user gives up."""
     ports = input_names()
