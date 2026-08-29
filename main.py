@@ -26,6 +26,19 @@ class SysexHandler:
                 return False
         return True
 
+    @staticmethod
+    def decode_value(data: List[int]) -> int:
+        """Decode the 4-byte data field as a 28-bit two's-complement integer.
+
+        Yamaha carries a parameter's value in four 7-bit bytes (Reference Manual
+        §2.8.3.2, "Parameter change (Edit buffer)"). Negative values are two's
+        complement, which is why the leading bytes read 0x7F below zero.
+        """
+        raw = (data[8] << 21) | (data[9] << 14) | (data[10] << 7) | data[11]
+        if raw >= 1 << 27:
+            raw -= 1 << 28
+        return raw
+
     # --- Ignore Specific Message ---
     # The 01v96i broadcasts this SysEx frequently — can be used to auto-detect the port?
     IGNORE_MESSAGE = (67, 16, 62, 26, 127)
@@ -38,44 +51,68 @@ class SysexHandler:
     def ignore_specific_message_handler(data: List[int], handler: 'OSC_Handler'):
         pass
 
+    # Fader position index, not dB. Measured on the console:
+    #   channel: raw 0 = -inf,  raw 823 = 0.0 dB,  raw 1023 = +10.0 dB
+    #   master:  raw 0 = -inf,  raw 1023 = 0.0 dB  (tops out at unity, not +10)
+    # Yamaha's exact table lives in the MIDI Protocol document, which is no longer
+    # distributed, so the shape between anchors follows the IEC 60268-17 console
+    # taper rescaled through raw 823. Exact at the anchors, approximate between;
+    # add measured pairs to tighten it.
+    FADER_MAX_RAW = 1023
+
+    # (raw, dB) breakpoints, interpolated linearly in dB.
+    FADER_LAW = [
+        (0, -90.0),     # bottom stop; reported as -inf
+        (55, -70.0),
+        (166, -50.0),
+        (331, -30.0),
+        (552, -10.0),
+        (823, 0.0),     # measured
+        (1023, 10.0),   # measured
+    ]
+
+    # The stereo fader spans the same travel but ends at unity instead of +10.
+    MASTER_FADER_LAW = [(raw, db - 10.0) for raw, db in FADER_LAW]
+
+    @staticmethod
+    def fader_db(raw: int, master: bool = False) -> float:
+        """Convert a fader position index to dB via the interpolated fader law."""
+        law = SysexHandler.MASTER_FADER_LAW if master else SysexHandler.FADER_LAW
+        raw = max(law[0][0], min(law[-1][0], raw))
+        for (r0, d0), (r1, d1) in zip(law, law[1:]):
+            if raw <= r1:
+                span = r1 - r0
+                return d0 if span == 0 else d0 + (d1 - d0) * (raw - r0) / span
+        return law[-1][1]
+
     # --- Master Fader ---
-    MASTER_FADER = [67, 16, 62, 127, 1, 79, 0, "L/R", 0, 0, "u", "v"]
+    MASTER_FADER = [67, 16, 62, 127, 1, 79, 0, "L/R", None, None, "u", "v"]
 
     @staticmethod
     def master_fader_mask(data: List[int]) -> bool:
         if not SysexHandler.match_sysex(data, SysexHandler.MASTER_FADER):
             return False
-        x = data[10]
-        v = data[11]
-        channel = data[7]
-        return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
+        # No u <= 7 bound: below 0 dB the value is two's complement, not a small int.
+        return 0 <= data[7] <= 15
 
     @staticmethod
     def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
-        x = data[10]
-        v = data[11]
-        volume = (x * 128 + v) / 1023.0
-        handler.master_volume(volume)
+        handler.master_volume(SysexHandler.fader_db(SysexHandler.decode_value(data), master=True))
 
     # --- Channel Fader ---
-    CH_FADER = [67, 16, 62, 127, 1, 28, 0, "channel", 0, 0, "u", "v"]
+    CH_FADER = [67, 16, 62, 127, 1, 28, 0, "channel", None, None, "u", "v"]
 
     @staticmethod
     def channel_fader_mask(data: List[int]) -> bool:
         if not SysexHandler.match_sysex(data, SysexHandler.CH_FADER):
             return False
-        channel = data[7]
-        x = data[10]
-        v = data[11]
-        return 0 <= channel <= 15 and 0 <= x <= 7 and 0 <= v <= 127
+        # No u <= 7 bound: below 0 dB the value is two's complement, not a small int.
+        return 0 <= data[7] <= 15
 
     @staticmethod
     def channel_fader_handler(data: List[int], handler: 'OSC_Handler'):
         channel = data[7]
-        x = data[10]
-        v = data[11]
-        volume = (x * 128 + v) / 1023.0
-        handler.volume(channel, volume)
+        handler.volume(channel, SysexHandler.fader_db(SysexHandler.decode_value(data)))
 
     # --- Pan ---
     PAN = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
@@ -100,14 +137,9 @@ class SysexHandler:
 
     @staticmethod
     def pan_handler(data: List[int], handler: 'OSC_Handler'):
+        # Console range is L63..C..R63; the wire value is the displayed number.
         channel = data[7]
-        if data[8] == 0:  # Right Pan
-            pan = data[11] / 63
-        elif data[8] == 127:  # Left Pan
-            pan = -(1 - data[11] / 63) - 1
-        else:
-            pan = 0
-            logging.warning(f"Unexpected pan value: {data[8]}")
+        pan = SysexHandler.decode_value(data) / 63
         handler.pan(channel, pan)
 
     # --- Y ---
@@ -133,14 +165,9 @@ class SysexHandler:
 
     @staticmethod
     def y_handler(data: List[int], handler: 'OSC_Handler'):
+        # Console range is L63..C..R63; the wire value is the displayed number.
         channel = data[7]
-        if data[8] == 0:  # Positive Y
-            y = data[11] / 63
-        elif data[8] == 127:  # Negative Y
-            y = -(1 - data[11] / 63) - 1
-        else:
-            y = 0
-            logging.warning(f"Unexpected y value: {data[8]}")
+        y = SysexHandler.decode_value(data) / 63
         handler.y(channel, y)
 
     # --- X ---
@@ -166,14 +193,9 @@ class SysexHandler:
 
     @staticmethod
     def x_handler(data: List[int], handler: 'OSC_Handler'):
+        # Console range is L63..C..R63; the wire value is the displayed number.
         channel = data[7]
-        if data[8] == 0:  # Positive X
-            x = data[11] / 63
-        elif data[8] == 127:  # Negative X
-            x = -(1 - data[11] / 63) - 1
-        else:
-            x = 0
-            logging.warning(f"Unexpected x value: {data[8]}")
+        x = SysexHandler.decode_value(data) / 63
         handler.x(channel, x)
 
     # --- Master Mute ---
@@ -244,37 +266,50 @@ class SysexHandler:
         osc_mute = 0 if mute == 1 else 1
         handler.mute(channel, osc_mute)
 
-    # EQ
-    # TODO find different EQ bands
-    # Band 1                            V => 82 : Master L/R, 32 : Chan 1-16
-    #                                          V => 3 : Gain, 2 : Frequency, 1 : type / Q
-    #                                                  V : if Master : 0/1 : L/R. If Channel : channel number
-    EQ_BAND_1 = [67, 16, 62, 127, 1, "Sel", "Param", "Ch", None, None, "u", "v"]
+    # EQ                               V Element:   82 master L/R, 32 channels 1-16
+    #                                          V Parameter: band + control, see EQ_PARAMS
+    #                                                  V Channel:   0/1 (L/R) for master,
+    #                                                              else the channel number
+    EQ = [67, 16, 62, 127, 1, "Sel", "Param", "Ch", None, None, "u", "v"]
+
+    # Parameter no. -> (band, control). Bands are contiguous blocks; band 1 and
+    # band 4 each carry an extra "enable" because the console repurposes their gain
+    # knob as the HPF/LPF on/off switch. Bands 2-4 observed on device via their
+    # gain parameters (7, 10, 13); the freq/Q slots follow from the block layout.
+    EQ_PARAMS = {
+        1: (1, "q"), 2: (1, "freq"), 3: (1, "gain"), 4: (1, "enable"),
+        5: (2, "q"), 6: (2, "freq"), 7: (2, "gain"),
+        8: (3, "q"), 9: (3, "freq"), 10: (3, "gain"),
+        11: (4, "q"), 12: (4, "freq"), 13: (4, "gain"), 14: (4, "enable"),
+    }
+
+    # Type and Q share one parameter: 0..40 select bell Q (10 .. 0.1) and the
+    # filter types sit above that range, where the control stops -- it does not
+    # wrap. The type codes are global; each band exposes only the two that apply
+    # to it (band 1: low shelf + HPF, band 4: high shelf + LPF). Confirmed from
+    # captures: band 1 emits 0..41 and 44, band 4 emits 0..40, 42 and 43.
+    EQ_TYPE_CODES = {
+        41: "L.Shelf",
+        42: "H.Shelf",
+        43: "LPF",
+        44: "HPF",
+    }
 
     @staticmethod
-    def eq_band_1_mask(data: List[int]) -> bool:
-        if len(data) != len(SysexHandler.EQ_BAND_1):
+    def eq_mask(data: List[int]) -> bool:
+        if len(data) != len(SysexHandler.EQ):
             return False
-        for d, m in zip(data, SysexHandler.EQ_BAND_1):
+        for d, m in zip(data, SysexHandler.EQ):
             if isinstance(m, str):
                 continue
             if m is None:
                 continue
             if d != m:
                 return False
-        channel = data[7]
-        u = data[10]
-        v = data[11]
-        param = data[6]
-        selector = data[5]
-        type = data[7]
         return (
-            0 <= channel <= 15
-            and 0 <= u <= 127
-            and 0 <= v <= 127
-            and selector in (82, 32)
-            and param in (3, 2, 1)
-            and type in range(0, 41)
+            0 <= data[7] <= 15
+            and data[5] in (82, 32)
+            and data[6] in SysexHandler.EQ_PARAMS
         )
 
     # EQ Bands work differently in 01v96i than Holophonix
@@ -285,7 +320,7 @@ class SysexHandler:
     #   Band 4  >   Band 6 or 7 or 8 depending on filter type (cut / shelf / bell)
 
     @staticmethod
-    def eq_band_1_handler(data: List[int], handler: 'OSC_Handler'):
+    def eq_handler(data: List[int], handler: 'OSC_Handler'):
         if data[5] == 82:  # Master
             selector = 'master'
             channel = None
@@ -296,36 +331,41 @@ class SysexHandler:
             logging.error("Invalid selector in EQ message")
             return
 
-        if data[6] == 3:  # Gain handling
-            if data[10] < 64:
-                gain = data[10] * 127 + data[11]
-            else:
-                gain = -((127 - data[10]) * 127 + (127 - data[11]))
-            gain = gain / 178 * 18
-            handler.eq(selector=selector, channel=channel, band=1, gain=gain)
-        elif data[6] == 2:  # Frequency handling
+        band, control = SysexHandler.EQ_PARAMS[data[6]]
+        raw = SysexHandler.decode_value(data)
+
+        if control == "gain":
+            # Raw is 0.1 dB steps: 180 == +18.0 dB, confirmed on device.
+            handler.eq(selector=selector, channel=channel, band=band, gain=raw / 10)
+        elif control == "freq":
             # Logarithmic scaling: value=5 -> 21.2 Hz, value=124 -> 20000 Hz
-            v = data[11]
             v_min, v_max = 5, 124
             hz_min, hz_max = 21.2, 20000
-            # Logarithmic interpolation
-            freq = hz_min * ((hz_max / hz_min) ** ((v - v_min) / (v_max - v_min)))
-            handler.eq(selector=selector, channel=channel, band=1, freq=freq)
-        elif data[6] == 1:  # Type / Q handling
-            # TODO add band handling for HPF / Shelf / Bell and input band
-            if data[11] == 44:
-                # HPF Filter -> Band 1
-                _bandType = 'HPF'
-            elif data[11] == 41:
-                # Shelf filter -> Band 2
-                _bandType = 'Shelf'
-            else:
-                # Bell filter -> Band 3
-                _bandType = 'Bell'  # Noqa F841
-                q_raw = data[11]
+            freq = hz_min * ((hz_max / hz_min) ** ((raw - v_min) / (v_max - v_min)))
+            handler.eq(selector=selector, channel=channel, band=band, freq=freq)
+        elif control == "q":
+            # Bands 1 and 4 are the shelving/cut bands (HPF + low shelf, LPF +
+            # high shelf); bands 2-3 are bell only.
+            filter_type = SysexHandler.EQ_TYPE_CODES.get(raw)
+            if filter_type is None:
+                filter_type = 'Bell'
                 # Logarithmic scaling: 40 -> 0.1, 0 -> 10
-                q = 10 * (0.1 / 10) ** (q_raw / 40)
-                handler.eq(selector=selector, channel=channel, band=3, Q=q)
+                handler.eq(
+                    selector=selector, channel=channel, band=band,
+                    Q=10 * (0.1 / 10) ** (raw / 40),
+                )
+            logging.debug(
+                f"EQ filter type: {selector} channel={channel} band={band} {filter_type}"
+            )
+        elif control == "enable":
+            # HPF (band 1) or LPF (band 4): the console repurposes that band's gain
+            # knob as the filter's on/off switch and sends this instead of a gain.
+            # TODO: no OSC address yet — the Holophonix filter-slot mapping is
+            # unresolved (docs/01v96i.md §5.2). Decoded and logged for now.
+            logging.info(
+                f"EQ filter enable: {selector} channel={channel} "
+                f"band={band} enabled={bool(raw)}"
+            )
 
 
 # --------------------------------- Handlers --------------------------------- #
@@ -365,14 +405,12 @@ class OSC_Handler:
         logging.debug(f"OSC sent: {osc_address_azim} {azim:.1f}")
         logging.debug(f"OSC sent: {osc_address_dist} {dist:.3f}")
 
-    def volume(self, channel: int, value: float):
-        db_value = (value * 72) - 60
+    def volume(self, channel: int, db_value: float):
         osc_address = f"/track/{channel+1}/gain"
         self.osc_sender.send(osc_address, db_value)
         logging.debug(f"OSC sent: {osc_address} {db_value:.1f}dB")
 
-    def master_volume(self, value: float):
-        db_value = (value * 72) - 60
+    def master_volume(self, db_value: float):
         osc_address = "/master/gain"
         self.osc_sender.send(osc_address, db_value)
         logging.debug(f"OSC sent: {osc_address} {db_value:.1f}dB")
@@ -486,7 +524,7 @@ def main():
     dispatcher.add_handler(SysexHandler.pan_mask, SysexHandler.pan_handler)
     dispatcher.add_handler(SysexHandler.y_mask, SysexHandler.y_handler)
     dispatcher.add_handler(SysexHandler.x_mask, SysexHandler.x_handler)
-    dispatcher.add_handler(SysexHandler.eq_band_1_mask, SysexHandler.eq_band_1_handler)
+    dispatcher.add_handler(SysexHandler.eq_mask, SysexHandler.eq_handler)
 
     midi_port = select_midi_port()
     if not midi_port:
