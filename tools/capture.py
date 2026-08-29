@@ -46,28 +46,9 @@ except ImportError:  # pragma: no cover
 from main import SysexHandler  # noqa: E402
 
 # Same order as the dispatcher registration in main.main() — first match wins.
-KNOWN_MESSAGES: List[tuple] = [
-    ("ignore", SysexHandler.ignore_specific_message_mask),
-    ("master_fader", SysexHandler.master_fader_mask),
-    ("master_mute_form_a", SysexHandler.master_mute_mask_1),
-    ("master_mute_form_b", SysexHandler.master_mute_mask_2),
-    ("channel_fader", SysexHandler.channel_fader_mask),
-    ("channel_mute_form_a", SysexHandler.mute_mask_1),
-    ("channel_mute_form_b", SysexHandler.mute_mask_2),
-    ("aux_send", SysexHandler.aux_send_mask),
-    ("aux_master", SysexHandler.aux_master_mask),
-    ("solo", SysexHandler.solo_mask),
-    ("solo_status", SysexHandler.solo_status_mask),
-    ("eq_band_select", SysexHandler.eq_band_select_mask),
-    ("console_state", SysexHandler.console_state_mask),
-    ("bus_fader", SysexHandler.bus_fader_mask),
-    ("bus_on", SysexHandler.bus_on_mask),
-    ("aux_on", SysexHandler.aux_on_mask),
-    ("pan", SysexHandler.pan_mask),
-    ("surround_y", SysexHandler.y_mask),
-    ("surround_x", SysexHandler.x_mask),
-    ("eq", SysexHandler.eq_mask),
-]
+# Name/mask pairs come from main.py's registry, so a control added there is
+# picked up here automatically and the two can never drift.
+KNOWN_MESSAGES = [(name, mask) for name, mask, _handler in SysexHandler.REGISTRY]
 
 
 def annotate(data: List[int]) -> Optional[str]:

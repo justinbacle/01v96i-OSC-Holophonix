@@ -50,7 +50,7 @@ SYSEX_VECTORS = [
     ([67, 16, 62, 127, 1, 37, 6, 4, 127, 0, 0, 127], "surround_y"),
     ([67, 16, 62, 127, 1, 32, 3, 2, 0, 0, 1, 51], "eq"),
     ([67, 16, 62, 127, 1, 82, 3, 0, 0, 0, 1, 51], "eq"),
-    ([67, 16, 62, 26, 127], "ignore"),
+    ([67, 16, 62, 26, 127], "keepalive"),
     ([67, 16, 62, 127, 9, 1, 0, 0, 0, 0, 0, 0], None),  # unknown message
 ]
 
@@ -86,7 +86,7 @@ class RunCaptureTest(unittest.TestCase):
 
         self.assertEqual(counts["channel_fader"], 1)
         self.assertEqual(counts["eq"], 2)
-        self.assertEqual(counts["ignore"], 1)
+        self.assertEqual(counts["keepalive"], 1)
         self.assertEqual(counts["UNKNOWN"], 1)
         self.assertEqual(counts["other:control_change"], 1)
 

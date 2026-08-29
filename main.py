@@ -119,8 +119,9 @@ class SysexHandler:
     def master_fader_mask(data: List[int]) -> bool:
         if not SysexHandler.match_sysex(data, SysexHandler.MASTER_FADER):
             return False
-        # No u <= 7 bound: below 0 dB the value is two's complement, not a small int.
-        return SysexHandler.is_channel_byte(data[7])
+        # B7 is the L/R slot here, not a channel. No u <= 7 bound either: below
+        # 0 dB the value is two's complement, not a small int.
+        return data[7] in (0, 1)
 
     @staticmethod
     def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
@@ -273,8 +274,21 @@ class SysexHandler:
     def solo_status_mask(data: List[int]) -> bool:
         return SysexHandler.match_sysex(data, SysexHandler.SOLO_STATUS)
 
+    # Surround mode / pattern selector: element 0x25 param 0, alongside the X/Y
+    # parameters 5 and 6. Values 0..6, meaning unknown.
+    SURROUND_MODE = [67, 16, 62, 127, 1, 37, 0, "channel", 0, 0, 0, "mode"]
+
+    # Element 0x2F sits next to solo in the Setup space with exactly the same shape
+    # (params 0 and 2, values 0/1, B7 = channel). Some other per-channel toggle;
+    # which one is unidentified, so it is recognised but not acted on.
+    SETUP_CHANNEL_FLAG = [67, 16, 62, 26, 3, 47, "Param", "channel", 0, 0, 0, "val"]
+
     @staticmethod
     def console_state_mask(data: List[int]) -> bool:
+        if SysexHandler.match_sysex(data, SysexHandler.SURROUND_MODE):
+            return True
+        if SysexHandler.match_sysex(data, SysexHandler.SETUP_CHANNEL_FLAG):
+            return True
         return (len(data) == 12 and data[:3] == [67, 16, 62] and data[3] == 26
                 and data[4] in SysexHandler.CONSOLE_STATE_ADDRESSES and data[5] == 9)
 
@@ -311,9 +325,8 @@ class SysexHandler:
             and data[6] == 0
         ):
             return False
-        channel = data[7]
-        pan = data[11]
-        return SysexHandler.is_channel_byte(channel) and 0 <= pan <= 127
+        # data[11] is a MIDI data byte, so no range check on it is meaningful.
+        return SysexHandler.is_channel_byte(data[7])
 
     @staticmethod
     def pan_handler(data: List[int], handler: 'OSC_Handler'):
@@ -341,9 +354,8 @@ class SysexHandler:
             and data[6] == 6
         ):
             return False
-        channel = data[7]
-        y = data[11]
-        return SysexHandler.is_channel_byte(channel) and 0 <= y <= 127
+        # data[11] is a MIDI data byte, so no range check on it is meaningful.
+        return SysexHandler.is_channel_byte(data[7])
 
     @staticmethod
     def y_handler(data: List[int], handler: 'OSC_Handler'):
@@ -371,9 +383,8 @@ class SysexHandler:
             and data[6] == 5
         ):
             return False
-        channel = data[7]
-        x = data[11]
-        return SysexHandler.is_channel_byte(channel) and 0 <= x <= 127
+        # data[11] is a MIDI data byte, so no range check on it is meaningful.
+        return SysexHandler.is_channel_byte(data[7])
 
     @staticmethod
     def x_handler(data: List[int], handler: 'OSC_Handler'):
@@ -568,6 +579,33 @@ class SysexHandler:
             )
 
 
+# Decode order matters: first match wins, so keep the keepalive first and the broad
+# EQ match last. Name, mask, handler -- consumed by SysexDispatcher and by the tools
+# in tools/, so a new control is registered exactly once.
+SysexHandler.REGISTRY = [
+    ("keepalive", SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler),
+    ("master_fader", SysexHandler.master_fader_mask, SysexHandler.master_fader_handler),
+    ("master_mute_form_a", SysexHandler.master_mute_mask_1, SysexHandler.master_mute_handler),
+    ("master_mute_form_b", SysexHandler.master_mute_mask_2, SysexHandler.master_mute_handler),
+    ("channel_fader", SysexHandler.channel_fader_mask, SysexHandler.channel_fader_handler),
+    ("channel_mute_form_a", SysexHandler.mute_mask_1, SysexHandler.mute_handler_1),
+    ("channel_mute_form_b", SysexHandler.mute_mask_2, SysexHandler.mute_handler_2),
+    ("aux_send", SysexHandler.aux_send_mask, SysexHandler.aux_send_handler),
+    ("aux_master", SysexHandler.aux_master_mask, SysexHandler.aux_master_handler),
+    ("solo", SysexHandler.solo_mask, SysexHandler.solo_handler),
+    ("solo_status", SysexHandler.solo_status_mask, SysexHandler.solo_status_handler),
+    ("eq_band_select", SysexHandler.eq_band_select_mask, SysexHandler.eq_band_select_handler),
+    ("console_state", SysexHandler.console_state_mask, SysexHandler.console_state_handler),
+    ("bus_fader", SysexHandler.bus_fader_mask, SysexHandler.bus_fader_handler),
+    ("bus_on", SysexHandler.bus_on_mask, SysexHandler.bus_on_handler),
+    ("aux_on", SysexHandler.aux_on_mask, SysexHandler.aux_on_handler),
+    ("pan", SysexHandler.pan_mask, SysexHandler.pan_handler),
+    ("surround_y", SysexHandler.y_mask, SysexHandler.y_handler),
+    ("surround_x", SysexHandler.x_mask, SysexHandler.x_handler),
+    ("eq", SysexHandler.eq_mask, SysexHandler.eq_handler),
+]
+
+
 # --------------------------------- Handlers --------------------------------- #
 
 
@@ -633,7 +671,8 @@ class OSC_Handler:
         if selector != 'master' and channel is None:
             logging.error("Channel must be provided for channel EQ")
             return
-        assert channel is not None
+        # channel is legitimately None for master EQ -- the addresses below branch
+        # on the selector, so it is never dereferenced in that case.
         if gain is not None:
             if selector == 'master':
                 osc_address = f"/master/equalizer/filter/{band}/gain"
@@ -714,26 +753,8 @@ def main():
     osc_sender = OSCSender(args.ip, args.port)
     handler = OSC_Handler(osc_sender)
     dispatcher = SysexDispatcher(handler)
-    dispatcher.add_handler(SysexHandler.ignore_specific_message_mask, SysexHandler.ignore_specific_message_handler)
-    dispatcher.add_handler(SysexHandler.master_fader_mask, SysexHandler.master_fader_handler)
-    dispatcher.add_handler(SysexHandler.master_mute_mask_1, SysexHandler.master_mute_handler)
-    dispatcher.add_handler(SysexHandler.master_mute_mask_2, SysexHandler.master_mute_handler)
-    dispatcher.add_handler(SysexHandler.channel_fader_mask, SysexHandler.channel_fader_handler)
-    dispatcher.add_handler(SysexHandler.mute_mask_1, SysexHandler.mute_handler_1)
-    dispatcher.add_handler(SysexHandler.mute_mask_2, SysexHandler.mute_handler_2)
-    dispatcher.add_handler(SysexHandler.aux_send_mask, SysexHandler.aux_send_handler)
-    dispatcher.add_handler(SysexHandler.aux_master_mask, SysexHandler.aux_master_handler)
-    dispatcher.add_handler(SysexHandler.solo_mask, SysexHandler.solo_handler)
-    dispatcher.add_handler(SysexHandler.solo_status_mask, SysexHandler.solo_status_handler)
-    dispatcher.add_handler(SysexHandler.eq_band_select_mask, SysexHandler.eq_band_select_handler)
-    dispatcher.add_handler(SysexHandler.console_state_mask, SysexHandler.console_state_handler)
-    dispatcher.add_handler(SysexHandler.bus_fader_mask, SysexHandler.bus_fader_handler)
-    dispatcher.add_handler(SysexHandler.bus_on_mask, SysexHandler.bus_on_handler)
-    dispatcher.add_handler(SysexHandler.aux_on_mask, SysexHandler.aux_on_handler)
-    dispatcher.add_handler(SysexHandler.pan_mask, SysexHandler.pan_handler)
-    dispatcher.add_handler(SysexHandler.y_mask, SysexHandler.y_handler)
-    dispatcher.add_handler(SysexHandler.x_mask, SysexHandler.x_handler)
-    dispatcher.add_handler(SysexHandler.eq_mask, SysexHandler.eq_handler)
+    for _name, mask, handler in SysexHandler.REGISTRY:
+        dispatcher.add_handler(mask, handler)
 
     midi_port = select_midi_port()
     if not midi_port:
