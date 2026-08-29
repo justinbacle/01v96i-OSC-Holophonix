@@ -5,7 +5,7 @@ Standalone companion to ``main.py`` — receives MIDI, sends no OSC. Every SysEx
 message is printed to the terminal and appended to a JSONL log file. Messages
 that match the known masks in ``main.py`` are annotated with their control
 name; anything else is flagged ``*** UNKNOWN ***`` (those are the interesting
-ones — see docs/01v96i.md §9 and docs/device-validation.md).
+ones — see docs/01v96i.md §9). For interactive work prefer tools/monitor.py.
 
 Usage:
     python3 tools/capture.py                       # interactive port selection
@@ -57,6 +57,9 @@ KNOWN_MESSAGES: List[tuple] = [
     ("aux_send", SysexHandler.aux_send_mask),
     ("aux_master", SysexHandler.aux_master_mask),
     ("solo", SysexHandler.solo_mask),
+    ("solo_status", SysexHandler.solo_status_mask),
+    ("eq_band_select", SysexHandler.eq_band_select_mask),
+    ("console_state", SysexHandler.console_state_mask),
     ("bus_fader", SysexHandler.bus_fader_mask),
     ("bus_on", SysexHandler.bus_on_mask),
     ("aux_on", SysexHandler.aux_on_mask),

@@ -16,12 +16,24 @@ for spatial audio control.
 
 ## Setup
 
+Requires Python 3.10+ and a MIDI input the mixer is connected to.
+
 ```bash
+# One-time on Ubuntu/Debian: venv support, the Python headers and ALSA headers.
+# python-rtmidi builds from source until wheels exist for your Python version.
+sudo apt install python3-venv python3-dev libasound2-dev
+
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python3 main.py
 ```
 
 On startup you will be prompted to select a MIDI input port. Type `q` + Enter to quit.
+
+The console exposes eight USB-MIDI ports; **MIDI 1** is the one to pick. It carries
+everything, while the console's configured Tx Port carries only a subset and moves if that
+setting changes (see [docs/01v96i.md](docs/01v96i.md) §0).
 
 ```bash
 python3 main.py [--ip <address>] [--port <port>]
@@ -36,11 +48,11 @@ python3 main.py [--ip <address>] [--port <port>]
 
 | Mixer control | OSC address | Value range |
 | --- | --- | --- |
-| Channel fader | `/track/{n}/gain` | −60 to +12 dB |
+| Channel fader | `/track/{n}/gain` | −∞ to +10 dB |
 | Channel mute | `/track/{n}/mute` | 0 / 1 |
 | Channel pan | `/track/{n}/azim` | −45 to +45° |
 | Surround X/Y | `/track/{n}/azim` + `/track/{n}/dist` | polar coords |
-| Master fader | `/master/gain` | −60 to +12 dB |
+| Master fader | `/master/gain` | −∞ to 0 dB |
 | Master mute | `/master/mute` | 0 / 1 |
 | EQ gain | `/track/{n}/equalizer/filter/{b}/gain` | −18 to +18 dB |
 | EQ frequency | `/track/{n}/equalizer/filter/{b}/freq` | 21.2 Hz – 20 kHz |
@@ -54,21 +66,25 @@ python3 main.py [--ip <address>] [--port <port>]
 
 ### Done
 
-- **Channel faders** — all 16 channels; 14-bit MIDI value → dB
-- **Master fader** — same scaling as channel faders
-- **Channel mute** — two SysEx variants (different mixer modes)
-- **Master mute** — two SysEx variants
-- **Pan (L/R)** — maps to ±45° azimuth
-- **Surround X/Y** — converts mixer surround pan X/Y parameters to azimuth + distance (polar)
+- **Channel faders** — all 16 channels; 10-bit position index → dB via a measured fader law
+- **Master fader** — same law, ending at unity instead of +10 dB
+- **Channel and master mute** — both the edit-buffer and backup-memory forms, which the
+  console emits together for every press
+- **Pan (L/R)** — the console's own −63…+63 value, mapped to ±45° azimuth
+- **Surround X/Y** — per-channel X/Y state → azimuth + distance (polar)
+- **EQ, all four bands** — gain, frequency, Q and filter type, plus the HPF/LPF enable that
+  bands 1 and 4 send in place of a gain
 - **MIDI port selection** — interactive on startup
 - **OSC transport** — UDP via `python-osc`
 
-### Partial / in progress
+### Decoded but not sent
 
-- **EQ Band 1** — gain and frequency are working; Q-factor only handled for Bell filter type;
-  HPF/Shelf/Bell band-type routing is documented but not fully wired
-- **EQ band mapping** — the intended mapping (HPF → band 1, Shelf → band 2, Bell → band 3)
-  is commented in the code but not yet enforced
+These are fully decoded and logged, but have no Holophonix address yet — the mapping is
+undecided (see [docs/01v96i.md](docs/01v96i.md) §5.2):
+
+- **Aux sends and aux masters**, **bus faders**, **bus/aux ON**
+- **Solo**
+- **EQ filter enable** for bands 1 and 4
 
 ### Not yet implemented
 
@@ -79,16 +95,34 @@ python3 main.py [--ip <address>] [--port <port>]
   - Polar output: `/adm/obj/{n}/azim`, `/adm/obj/{n}/dist` (azimuth −180 to 180°, distance 0 to 1)
   - Gain: `/adm/obj/{n}/gain` (linear 0–1) instead of dB
   - A runtime mode switch (Holophonix vs ADM-OSC) so both targets can be supported
-- **EQ Bands 2, 3, 4** — no handlers registered
-- **Configuration file** — OSC host/port are hardcoded
+- **Configuration file** — OSC host/port are settable with `--ip`/`--port` but not persisted
 - **Other mixer parameters** — compressor, gates, reverb sends, aux routing, etc. (scope TBD)
 - **Bidirectional sync** — no state received from Holophonix; mixer position is not updated on connect
 
 ## Project structure
 
 ```text
-main.py                  # Application entry point; all MIDI→OSC logic
-osc/osc_sender.py        # Thin UDP wrapper around python-osc
-midi/midi_sysex.py       # MIDI SysEx listener class (defined, not yet used)
+main.py                    # Application entry point; all MIDI→OSC logic
+osc/osc_sender.py          # Thin UDP wrapper around python-osc
+midi/midi_sysex.py         # MIDI SysEx listener used by the run loop
+tools/monitor.py           # Live TUI: decodes the console's SysEx as you move controls
+tools/capture.py           # Bulk MIDI capture & annotation logger
+tools/osc_dump.py          # Stand-in OSC receiver for testing without Holophonix
+tests/                     # Unit tests (run without MIDI hardware)
+docs/01v96i.md             # Reverse-engineered 01V96i SysEx reference (authoritative)
+docs/refactor-plan.md      # Refactor plan: reusable 01v96i API + pluggable backends
 requirements.txt
 ```
+
+## Development
+
+With the venv active:
+
+```bash
+python3 -m unittest discover -s tests -v   # no MIDI hardware needed
+python3 tools/monitor.py                   # live decode of everything the mixer sends
+python3 tools/osc_dump.py --port 4003      # print what the bridge sends over OSC
+```
+
+`tools/monitor.py` shares `main.py`'s masks, so it cannot drift from the bridge. Unknown
+messages are highlighted — that is how the aux, bus and solo support above was found.

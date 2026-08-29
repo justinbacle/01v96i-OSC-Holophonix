@@ -21,7 +21,7 @@ same physical surface can drive other OSC targets — ADM-OSC (open standard) an
 - One commit per migration step (§9), tests green at each step.
 - If you hit an environment blocker (missing dependency, sandbox limit), **stop and ask the
   owner** — do not work around it.
-- Hardware-in-the-loop verification is done by the owner (see docs/device-validation.md);
+- Hardware-in-the-loop verification is done by the owner (see docs/01v96i.md §9);
   your tests must not require MIDI hardware.
 
 ## 2. Current-state problems
@@ -279,7 +279,7 @@ python3 main.py [--backend holophonix|reaper|adm] [--host IP] [--port N]
   sign byte other than 0/127 → 0.0 + warning; fader `u = 8` → mask rejects (documents §7.5);
   EQ type code not in {41, 44} → `filter_type='UNKNOWN'`, no Q.
 - **Parser tests**: mask-order precedence, `on_unknown` invocation, per-channel X/Y state.
-- **Fixtures**: JSONL files from the device-validation session (docs/device-validation.md
+- **Fixtures**: JSONL files captured with tools/monitor.py (docs/01v96i.md §9
   "after the session") can be replayed as regression data — add `tests/fixtures/`.
 - Run: `python3 -m unittest discover -s tests -v` with the venv active (README § Development).
 
@@ -366,7 +366,7 @@ equality.
   need rtmidi — only `mido` + `python-osc` — so run them via
   `source .venv/bin/activate && python3 -m unittest discover -s tests`.
 - The console is not connected in this environment; anything hardware-related goes
-  through the owner (docs/device-validation.md).
+  through the owner (docs/01v96i.md §9).
 
 ## 13. Out of scope (explicitly)
 
@@ -374,4 +374,4 @@ equality.
 - Bank/layer switching for >16 channels (REAPER backend note).
 - Config file persistence for host/port (CLI flags are enough for this phase).
 - EQ bands 2–4 and any parameter not yet captured — they enter as new rows in the decoder
-  table after the device-validation session, not as speculative code.
+  table after on-device verification, not as speculative code.

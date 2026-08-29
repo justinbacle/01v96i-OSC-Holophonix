@@ -53,6 +53,9 @@ KNOWN_MESSAGES = [
     ("aux_send", SysexHandler.aux_send_mask),
     ("aux_master", SysexHandler.aux_master_mask),
     ("solo", SysexHandler.solo_mask),
+    ("solo_status", SysexHandler.solo_status_mask),
+    ("eq_band_select", SysexHandler.eq_band_select_mask),
+    ("console_state", SysexHandler.console_state_mask),
     ("bus_fader", SysexHandler.bus_fader_mask),
     ("bus_on", SysexHandler.bus_on_mask),
     ("aux_on", SysexHandler.aux_on_mask),
@@ -63,6 +66,18 @@ KNOWN_MESSAGES = [
 ]
 
 
+
+
+def channel_label(b7: Optional[int]) -> str:
+    """Human label for a channel byte: ch1-16, ST1-4, and ST1R.. for the linked R slots."""
+    if b7 is None:
+        return "   "
+    if 0 <= b7 < SysexHandler.MONO_CHANNELS:
+        return f"ch{b7 + 1}"
+    offset = b7 - SysexHandler.ST_IN_FIRST
+    if 0 <= offset < SysexHandler.ST_IN_COUNT * 2:
+        return f"ST{offset // 2 + 1}" + ("R" if offset % 2 else "")
+    return f"b7={b7}"
 
 
 def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
@@ -81,13 +96,18 @@ def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
         return label, None, ""
 
     channel = data[7]
+
     if label == "aux_send":
         aux = SysexHandler.AUX_SEND_PARAMS[data[6]]
         raw = SysexHandler.decode_value(data)
         db = SysexHandler.fader_db(raw, unity_top=True)
         return label, channel, f"aux {aux}  raw={raw:5d}  ({db:+.1f} dB)"
+    if label == "eq_band_select":
+        return label, None, f"console selected EQ band {data[11] + 1}"
+    if label in ("solo_status", "console_state"):
+        return label, None, f"param {data[6]} = {data[11]}   (unmapped console status)"
     if label == "solo":
-        return label, channel, f"ch{channel + 1} solo: {'ON' if data[11] else 'off'}  (param {data[6]})"
+        return label, channel, f"{channel_label(channel)} solo: {'ON' if data[11] else 'off'}  (param {data[6]})"
     if label in ("bus_on", "aux_on"):
         kind = "bus" if label == "bus_on" else "aux"
         return label, channel, f"{kind} {channel + 1}: {'ON' if data[11] else 'OFF'}"
@@ -110,7 +130,7 @@ def decode(data: List[int]) -> Tuple[str, Optional[int], str]:
         value = SysexHandler.decode_value(data)
         return label, channel, f"{value:+4d} / 63  ({value / 63:+.3f})"
     if label == "eq":
-        who = "master" if data[5] == 82 else f"ch{channel + 1}"
+        who = "master" if data[5] == 82 else channel_label(channel)
         band, control = SysexHandler.EQ_PARAMS[data[6]]
         param = f"b{band} {control}"
         if control == "gain":
@@ -230,7 +250,7 @@ def draw(stdscr: "curses._CursesWindow", state: MonitorState, port_name: str, fl
         if y >= height - 1:
             break
         stamp = datetime.fromtimestamp(row["ts"]).strftime("%H:%M:%S")
-        chan = f"ch{row['channel'] + 1:<2}" if row["channel"] is not None else "   "
+        chan = f"{channel_label(row['channel']):<5}"
         rep = f" x{row['repeat']}" if row["repeat"] > 1 else ""
         attr = curses.color_pair(3) | curses.A_BOLD if row["label"] == "UNKNOWN" else 0
         put(stdscr, y, 0, f"{stamp} {row['label']:<15} {chan} {row['value']}{rep}"[: split - 1], attr)
@@ -265,7 +285,7 @@ def draw(stdscr: "curses._CursesWindow", state: MonitorState, port_name: str, fl
                 break
             parts = state.channels[chan]
             summary = " ".join(f"{k.replace('channel_', '')}={v.split('(')[0].strip()}" for k, v in parts.items())
-            put(stdscr, y, split, f"  ch{chan + 1:<3}{summary}")
+            put(stdscr, y, split, f"  {channel_label(chan):<6}{summary}")
             y += 1
 
     footer = " q quit   space pause   c clear   k keepalive   u unknown-only "

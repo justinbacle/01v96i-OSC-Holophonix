@@ -1,4 +1,4 @@
-from typing import List, Callable
+from typing import List, Callable, Optional
 import argparse
 import logging
 import math
@@ -38,6 +38,32 @@ class SysexHandler:
         if raw >= 1 << 27:
             raw -= 1 << 28
         return raw
+
+    # Channel byte (B7) numbering, per the Reference Manual: 0..31 are the mono
+    # channels CH1..CH32 (channel 17 observed at B7 = 16 on the 17-32 layer), and
+    # the stereo inputs follow at 32..39 as ST-IN 1L, 1R, 2L, 2R, ... 4R.
+    # The two sides of each ST pair are linked -- every observed L/R pair carried
+    # the same value -- so only the L slot is acted on, and ST-IN 1..4 are exposed
+    # after the mono channels as tracks 33..36.
+    MONO_CHANNELS = 32
+    ST_IN_FIRST = 32
+    ST_IN_COUNT = 4
+
+    @staticmethod
+    def is_channel_byte(b7: int) -> bool:
+        """True for any B7 the bridge recognises, including both ST-IN slots."""
+        return (0 <= b7 < SysexHandler.MONO_CHANNELS
+                or 0 <= b7 - SysexHandler.ST_IN_FIRST < SysexHandler.ST_IN_COUNT * 2)
+
+    @staticmethod
+    def channel_index(b7: int) -> Optional[int]:
+        """0-based track index for a channel byte, or None to ignore (ST-IN R slot)."""
+        if 0 <= b7 < SysexHandler.MONO_CHANNELS:
+            return b7
+        offset = b7 - SysexHandler.ST_IN_FIRST
+        if 0 <= offset < SysexHandler.ST_IN_COUNT * 2:
+            return None if offset % 2 else SysexHandler.MONO_CHANNELS + offset // 2
+        return None
 
     # --- Ignore Specific Message ---
     # The 01v96i broadcasts this SysEx frequently — can be used to auto-detect the port?
@@ -94,7 +120,7 @@ class SysexHandler:
         if not SysexHandler.match_sysex(data, SysexHandler.MASTER_FADER):
             return False
         # No u <= 7 bound: below 0 dB the value is two's complement, not a small int.
-        return 0 <= data[7] <= 15
+        return SysexHandler.is_channel_byte(data[7])
 
     @staticmethod
     def master_fader_handler(data: List[int], handler: 'OSC_Handler'):
@@ -110,11 +136,13 @@ class SysexHandler:
         if not SysexHandler.match_sysex(data, SysexHandler.CH_FADER):
             return False
         # No u <= 7 bound: below 0 dB the value is two's complement, not a small int.
-        return 0 <= data[7] <= 15
+        return SysexHandler.is_channel_byte(data[7])
 
     @staticmethod
     def channel_fader_handler(data: List[int], handler: 'OSC_Handler'):
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         handler.volume(channel, SysexHandler.fader_db(SysexHandler.decode_value(data)))
 
     # --- Aux Send Fader ---
@@ -128,12 +156,14 @@ class SysexHandler:
     def aux_send_mask(data: List[int]) -> bool:
         if not SysexHandler.match_sysex(data, SysexHandler.AUX_SEND):
             return False
-        return 0 <= data[7] <= 15 and data[6] in SysexHandler.AUX_SEND_PARAMS
+        return SysexHandler.is_channel_byte(data[7]) and data[6] in SysexHandler.AUX_SEND_PARAMS
 
     @staticmethod
     def aux_send_handler(data: List[int], handler: 'OSC_Handler'):
         aux = SysexHandler.AUX_SEND_PARAMS[data[6]]
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         db = SysexHandler.fader_db(SysexHandler.decode_value(data), unity_top=True)
         # TODO: no OSC address yet — aux sends are unmapped on the Holophonix side.
         logging.info(f"Aux send: aux={aux} channel={channel + 1} {db:+.1f} dB")
@@ -214,14 +244,55 @@ class SysexHandler:
     def solo_mask(data: List[int]) -> bool:
         if not SysexHandler.match_sysex(data, SysexHandler.SOLO):
             return False
-        return 0 <= data[7] <= 15 and data[6] in (0, 2) and data[11] in (0, 1)
+        return SysexHandler.is_channel_byte(data[7]) and data[6] in (0, 2) and data[11] in (0, 1)
 
     @staticmethod
     def solo_handler(data: List[int], handler: 'OSC_Handler'):
         if data[6] != 0:
             return
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         # TODO: no OSC address yet — solo is unmapped on the Holophonix side.
-        logging.info(f"Solo: channel={data[7] + 1} soloed={bool(data[11])}")
+        logging.info(f"Solo: channel={channel + 1} soloed={bool(data[11])}")
+
+    # --- Console status (recognised, not mapped) ---
+    # Two elements the console emits as side effects rather than as controls. They
+    # are matched so they do not drown out genuinely unknown messages during
+    # discovery; what their parameters mean is not known.
+    #   0x30  global solo status, Backup space, always B7 = 0. Fires alongside every
+    #         solo press: params 0 and 1 carry 0/1, param 2 carries 0/2, param 3 = 0.
+    #   0x09  layer / selection indicator, seen in both the Setup and Backup spaces
+    #         on layer changes and solo presses.
+    #   0x4C  which EQ band is selected on the console UI, 0-based (0 = band 1).
+    SOLO_STATUS = [67, 16, 62, 26, 4, 48, "Param", 0, 0, 0, 0, "val"]
+    EQ_BAND_SELECT = [67, 16, 62, 26, 4, 76, 0, 0, 0, 0, 0, "band"]
+    CONSOLE_STATE_ADDRESSES = (3, 4)
+
+    @staticmethod
+    def solo_status_mask(data: List[int]) -> bool:
+        return SysexHandler.match_sysex(data, SysexHandler.SOLO_STATUS)
+
+    @staticmethod
+    def console_state_mask(data: List[int]) -> bool:
+        return (len(data) == 12 and data[:3] == [67, 16, 62] and data[3] == 26
+                and data[4] in SysexHandler.CONSOLE_STATE_ADDRESSES and data[5] == 9)
+
+    @staticmethod
+    def eq_band_select_mask(data: List[int]) -> bool:
+        return SysexHandler.match_sysex(data, SysexHandler.EQ_BAND_SELECT) and 0 <= data[11] <= 3
+
+    @staticmethod
+    def eq_band_select_handler(data: List[int], handler: 'OSC_Handler'):
+        logging.debug(f"EQ band selected on console: band {data[11] + 1}")
+
+    @staticmethod
+    def solo_status_handler(data: List[int], handler: 'OSC_Handler'):
+        logging.debug(f"Solo status: param={data[6]} value={data[11]}")
+
+    @staticmethod
+    def console_state_handler(data: List[int], handler: 'OSC_Handler'):
+        logging.debug(f"Console state: param={data[6]} value={data[11]}")
 
     # --- Pan ---
     PAN = [67, 16, 62, 127, 1, 27, 0, "channel", None, None, None, "pan"]
@@ -242,12 +313,14 @@ class SysexHandler:
             return False
         channel = data[7]
         pan = data[11]
-        return 0 <= channel <= 15 and 0 <= pan <= 127
+        return SysexHandler.is_channel_byte(channel) and 0 <= pan <= 127
 
     @staticmethod
     def pan_handler(data: List[int], handler: 'OSC_Handler'):
         # Console range is L63..C..R63; the wire value is the displayed number.
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         pan = SysexHandler.decode_value(data) / 63
         handler.pan(channel, pan)
 
@@ -270,12 +343,14 @@ class SysexHandler:
             return False
         channel = data[7]
         y = data[11]
-        return 0 <= channel <= 15 and 0 <= y <= 127
+        return SysexHandler.is_channel_byte(channel) and 0 <= y <= 127
 
     @staticmethod
     def y_handler(data: List[int], handler: 'OSC_Handler'):
         # Console range is L63..C..R63; the wire value is the displayed number.
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         y = SysexHandler.decode_value(data) / 63
         handler.y(channel, y)
 
@@ -298,12 +373,14 @@ class SysexHandler:
             return False
         channel = data[7]
         x = data[11]
-        return 0 <= channel <= 15 and 0 <= x <= 127
+        return SysexHandler.is_channel_byte(channel) and 0 <= x <= 127
 
     @staticmethod
     def x_handler(data: List[int], handler: 'OSC_Handler'):
         # Console range is L63..C..R63; the wire value is the displayed number.
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         x = SysexHandler.decode_value(data) / 63
         handler.x(channel, x)
 
@@ -351,11 +428,13 @@ class SysexHandler:
             return False
         channel = data[7]
         mute = data[11]
-        return 0 <= channel <= 15 and mute in (0, 1)
+        return SysexHandler.is_channel_byte(channel) and mute in (0, 1)
 
     @staticmethod
     def mute_handler_1(data: List[int], handler: 'OSC_Handler'):
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         mute = data[11]
         osc_mute = 0 if mute == 1 else 1
         handler.mute(channel, osc_mute)
@@ -368,11 +447,13 @@ class SysexHandler:
             return False
         channel = data[7]
         mute = data[11]
-        return 0 <= channel <= 15 and mute in (0, 1)
+        return SysexHandler.is_channel_byte(channel) and mute in (0, 1)
 
     @staticmethod
     def mute_handler_2(data: List[int], handler: 'OSC_Handler'):
-        channel = data[7]
+        channel = SysexHandler.channel_index(data[7])
+        if channel is None:
+            return
         mute = data[11]
         osc_mute = 0 if mute == 1 else 1
         handler.mute(channel, osc_mute)
@@ -419,7 +500,7 @@ class SysexHandler:
             if d != m:
                 return False
         return (
-            0 <= data[7] <= 15
+            SysexHandler.is_channel_byte(data[7])
             and data[5] in (82, 32)
             and data[6] in SysexHandler.EQ_PARAMS
         )
@@ -443,7 +524,9 @@ class SysexHandler:
             channel = None
         elif data[5] == 32:  # Channel
             selector = 'channel'
-            channel = data[7]
+            channel = SysexHandler.channel_index(data[7])
+            if channel is None:
+                return
         else:
             logging.error("Invalid selector in EQ message")
             return
@@ -641,6 +724,9 @@ def main():
     dispatcher.add_handler(SysexHandler.aux_send_mask, SysexHandler.aux_send_handler)
     dispatcher.add_handler(SysexHandler.aux_master_mask, SysexHandler.aux_master_handler)
     dispatcher.add_handler(SysexHandler.solo_mask, SysexHandler.solo_handler)
+    dispatcher.add_handler(SysexHandler.solo_status_mask, SysexHandler.solo_status_handler)
+    dispatcher.add_handler(SysexHandler.eq_band_select_mask, SysexHandler.eq_band_select_handler)
+    dispatcher.add_handler(SysexHandler.console_state_mask, SysexHandler.console_state_handler)
     dispatcher.add_handler(SysexHandler.bus_fader_mask, SysexHandler.bus_fader_handler)
     dispatcher.add_handler(SysexHandler.bus_on_mask, SysexHandler.bus_on_handler)
     dispatcher.add_handler(SysexHandler.aux_on_mask, SysexHandler.aux_on_handler)
