@@ -67,28 +67,43 @@ filter-slot mapping in [docs/01v96i.md](01v96i.md) §5.2, and what a stereo inpu
 should mean. Plus one build task — the bridge can only *send* OSC, so Holophonix cannot
 drive the console (see § Bidirectional below).
 
-### DAW control — read this before building anything
+### DAW control — the console is a HUI surface, not MCU
 
-The console already does this natively. Its **REMOTE layer** targets Pro Tools, Nuendo,
-Cubase, "General DAW" (anything speaking the Pro Tools protocol) or User Defined, and is
-selected with the LAYER `[REMOTE]` button. On that layer the faders and `[ON]` buttons
-drive the external device directly, over the **DAW port pair** (USB 2–3 on this console).
+The console has a **REMOTE layer** (LAYER `[REMOTE]` button) whose targets are Pro Tools,
+Nuendo, Cubase, "General DAW" and User Defined. On that layer the faders and `[ON]`
+buttons drive the external device over the **DAW port pair** (USB 2–3 on this console).
 
-Two consequences worth being clear about before committing to an MCU bridge:
+The important detail: the manual describes "General DAW" as *"DAW software that supports
+the protocol used by Pro Tools"* — that is **HUI**. The words Mackie, MCU and Logic
+Control appear nowhere in the manual. HUI and MCU are different protocols: MCU came later
+and absorbed HUI's functionality plus more, and modern DAWs generally target MCU while HUI
+is legacy. **So the 01V96i is not an MCU surface**, which is the likely reason connecting
+it to REAPER did not work.
 
-1. **The protocol is not ours to invent.** Selecting "General DAW" makes the console
-   speak the Pro Tools/HUI protocol on the DAW ports. An MCU bridge would *receive* that,
-   not build it on top of SysEx. That is a different decoder from everything in
-   `yamaha01v96i/`, though it could share the transport and tooling.
-2. **It is a mode, not an addition.** The manual is explicit: during Remote operation
-   "you cannot adjust the 01V96i's parameters unless you select a different layer". So
-   the console is *either* a DAW surface *or* mixing — the SysEx bridge and a DAW surface
-   cannot both be live on the same layer.
+That leaves three routes, and the third is much cheaper than the other two:
 
-The **User Defined** remote target is the more flexible option: arbitrary MIDI messages
-assigned to faders and `[ON]` buttons, in four recallable banks. That would let the
-console emit whatever we choose without touching the Pro Tools protocol at all — worth
-weighing against implementing HUI.
+1. **HUI into REAPER.** REAPER does list HUI support, but it is the legacy path and the
+   console's emulation is partial. Fiddly, and already tried without success.
+2. **Translate HUI to MCU.** Receive the console's HUI on the DAW ports and re-emit MCU.
+   A whole second decoder, for a protocol we would have to reverse-engineer or find a
+   specification for. Substantial work.
+3. **REAPER over OSC, using the SysEx bridge we already have.** REAPER supports OSC
+   natively, with a configurable address pattern. Our existing pipeline already decodes
+   every fader, mute, pan and EQ move; a REAPER backend beside `backends/holophonix.py`
+   is then a mapping table, not a new protocol. It also works on the **normal mixing
+   layer**, so the console stays a mixer — whereas the REMOTE layer is a mode, and the
+   manual is explicit that "you cannot adjust the 01V96i's parameters unless you select a
+   different layer".
+
+Route 3 is what [docs/refactor-plan.md](refactor-plan.md) §6.2 already proposed, and
+nothing found since argues against it. The trade-off is that OSC gives no transport
+control or scribble-strip feedback the way HUI/MCU would; if those matter, route 2 becomes
+worth its cost.
+
+The **User Defined** remote target is the remaining option worth knowing about: arbitrary
+MIDI messages assigned to the faders and `[ON]` buttons, in four recallable banks. That
+sidesteps HUI entirely and could emit whatever a translator wants — but it is limited to
+faders and ON buttons, and still costs the mixing layer.
 
 ### General control surface
 

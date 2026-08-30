@@ -12,12 +12,18 @@ import threading
 import time
 
 from backends.holophonix import HolophonixBackend
+from backends.reaper import ReaperBackend
 import mido
 
 from midi import ports
 from midi.midi_sysex import MidiSysexListener
+from backends.reaper_inbound import ReaperInbound
+from osc.osc_receiver import OSCReceiver
 from osc.osc_sender import OSCSender
 from yamaha01v96i import encoder, parse
+
+
+BACKENDS = {"holophonix": HolophonixBackend, "reaper": ReaperBackend}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
                                           "(substring match; skips the prompt)")
     parser.add_argument("--midi-out", help="MIDI output port: the console's Rx PORT "
                                            "(substring match; enables sending)")
+    parser.add_argument("--backend", choices=sorted(BACKENDS), default="holophonix",
+                        help="which OSC address scheme to emit")
+    parser.add_argument("--listen-port", type=int,
+                        help="UDP port to receive OSC feedback on, so the DAW can drive "
+                             "the console (reaper backend only)")
     parser.add_argument("--no-sync", dest="sync", action="store_false",
                         help="do not ask the console for its state on startup")
     parser.add_argument("-v", "--verbose", action="store_true", help="log every OSC send")
@@ -64,7 +75,18 @@ def main() -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s: %(message)s")
 
-    backend = HolophonixBackend(OSCSender(args.ip, args.port))
+    sender = OSCSender(args.ip, args.port)
+    inbound: ReaperInbound | None = None
+
+    class EchoAwareSender:
+        """Passes sends through, recording them so REAPER's echo can be ignored."""
+
+        def send(self, address: str, *values) -> None:
+            if inbound is not None and values:
+                inbound.note_sent(address, values[0])
+            sender.send(address, *values)
+
+    backend = BACKENDS[args.backend](EchoAwareSender())
 
     midi_port = ports.resolve_input(args.midi_in)
     midi_out = ports.resolve_output(args.midi_out)
@@ -96,6 +118,18 @@ def main() -> int:
     elif args.sync:
         logging.warning("No MIDI output found: starting without console state.")
 
+    receiver = None
+    if args.listen_port is not None:
+        if outport is None:
+            logging.error("--listen-port needs a MIDI output to drive the console")
+            return 1
+        if args.backend != "reaper":
+            logging.error("--listen-port is only implemented for the reaper backend")
+            return 1
+        inbound = ReaperInbound(outport)
+        receiver = OSCReceiver("0.0.0.0", args.listen_port, inbound.handle)
+        receiver.start()
+
     if args.sync and outport is not None:
         threading.Thread(target=request_state, args=(outport,), daemon=True).start()
 
@@ -116,6 +150,8 @@ def main() -> int:
     threading.Thread(target=check_exit, daemon=True).start()
     logging.info(f"Listening for Sysex on {midi_port}... (press 'q' + Enter to exit)")
     listener.listen()
+    if receiver is not None:
+        receiver.stop()
     return 0
 
 
