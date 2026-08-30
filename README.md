@@ -180,10 +180,13 @@ requirements.txt
 
 ## Development
 
+[![tests](https://github.com/justinbacle/01v96i-bridge/actions/workflows/tests.yml/badge.svg)](https://github.com/justinbacle/01v96i-bridge/actions/workflows/tests.yml)
+
 With the venv active:
 
 ```bash
 python3 -m unittest discover -s tests -v   # no MIDI hardware needed
+python3 -m flake8 main.py yamaha01v96i backends midi osc tools tests
 python3 tools/monitor.py                   # live decode of everything the mixer sends
 python3 tools/osc_dump.py --port 4003      # print what the bridge sends over OSC
 ```
