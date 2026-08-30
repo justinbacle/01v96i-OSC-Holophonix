@@ -28,6 +28,7 @@ EL_LAYER = 0x09
 EL_CH_ON = 0x1A
 EL_PAN = 0x1B
 EL_CH_FADER = 0x1C
+EL_ATT = 0x1D
 EL_CH_EQ = 0x20
 EL_AUX_SEND = 0x23
 EL_SURROUND = 0x25
@@ -52,6 +53,9 @@ EL_MASTER_ON_B = 0x5E
 AUX_SEND_PARAMS = {3 * aux - 1: aux for aux in range(1, 9)}
 
 SURROUND_AXES = {5: "x", 6: "y"}
+
+# The slot straight after band 4's enable: the whole-EQ bypass.
+EQ_ON_PARAM = 15
 
 
 def matches(data: List[int], template: Template) -> bool:
@@ -181,6 +185,29 @@ def _eq(data):
     return ev.EqChanged(tuple(data), selector, channel, band, q=p.eq_q(raw))
 
 
+def _eq_on(data):
+    if data[5] == EL_MASTER_EQ:
+        if data[7] != 0:
+            return _linked_slot(data)
+        selector, channel = "master", None
+    elif data[5] == EL_AUX_EQ:
+        selector, channel = "aux", data[7]
+    else:
+        selector, channel = "channel", _channel(data)
+        if channel is None:
+            return _linked_slot(data)
+    return ev.EqOnChanged(tuple(data), selector, channel, bool(data[11]))
+
+
+def _attenuation(data):
+    ch = _channel(data)
+    if ch is None:
+        return _linked_slot(data)
+    # Tenths of a dB, like EQ gain.
+    return ev.AttenuationChanged(tuple(data), ch,
+                                 p.decode_value(data) / p.EQ_GAIN_STEPS_PER_DB)
+
+
 def _status(kind: str) -> Callable[[List[int]], ev.MixerEvent]:
     def factory(data):
         return ev.ConsoleStatus(tuple(data), kind, data[6], data[11])
@@ -229,6 +256,10 @@ MESSAGES = [
      lambda d: 0 <= d[7] <= 7 and d[11] in (0, 1), _aux_on),
     ("aux_on_form_b", FORM_BACKUP + [EL_AUX_ON_B, 0, _, 0, 0, 0, _],
      lambda d: 0 <= d[7] <= 7 and d[11] in (0, 1), _aux_on),
+    ("attenuation", FORM_A + [EL_ATT, 0, _, _, _, _, _],
+     lambda d: p.is_channel_byte(d[7]), _attenuation),
+    ("eq_on", FORM_A + [_, EQ_ON_PARAM, _, 0, 0, 0, _],
+     lambda d: d[5] in (EL_CH_EQ, EL_AUX_EQ, EL_MASTER_EQ) and d[11] in (0, 1), _eq_on),
     ("pan", FORM_A + [EL_PAN, 0, _, _, _, _, _], lambda d: p.is_channel_byte(d[7]), _pan),
     ("surround_y", FORM_A + [EL_SURROUND, 6, _, _, _, _, _],
      lambda d: p.is_channel_byte(d[7]), _surround),

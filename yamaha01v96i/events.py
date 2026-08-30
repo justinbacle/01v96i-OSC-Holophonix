@@ -106,6 +106,21 @@ class SurroundMoved(MixerEvent):
 
 
 @dataclass(frozen=True)
+class EqOnChanged(MixerEvent):
+    """Whole-EQ bypass, distinct from bands 1/4's HPF/LPF enable."""
+    selector: str
+    channel: Optional[int]
+    on: bool
+
+
+@dataclass(frozen=True)
+class AttenuationChanged(MixerEvent):
+    """The EQ page's ATT trim, -96.0 .. +12.0 dB."""
+    channel: int
+    db: float
+
+
+@dataclass(frozen=True)
 class SoloChanged(MixerEvent):
     channel: int
     soloed: bool

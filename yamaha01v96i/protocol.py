@@ -6,6 +6,7 @@ docs/01v96i.md, which is the authority and should be updated before this file.
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 # --- Framing (Reference Manual §2.8.3) --------------------------------------- #
@@ -116,6 +117,11 @@ def fader_raw(db: float, unity_top: bool = False) -> int:
 PAN_MAX = 63  # console shows L63 .. C .. R63
 
 
+def pan_raw(value: float) -> int:
+    """-1.0 .. +1.0 -> the console's own -63 .. +63."""
+    return max(-PAN_MAX, min(PAN_MAX, int(round(value * PAN_MAX))))
+
+
 # --- EQ (docs/01v96i.md §4.4, §5.3) ------------------------------------------ #
 
 EQ_GAIN_STEPS_PER_DB = 10  # raw is tenths of a dB
@@ -147,3 +153,22 @@ def eq_freq_hz(raw: int) -> float:
 def eq_q(raw: int) -> float:
     """Bell Q from the shared type/Q parameter: raw 0 -> Q 10, raw 40 -> Q 0.1."""
     return 10 * (0.1 / 10) ** (raw / 40)
+
+
+def eq_gain_raw(db: float) -> int:
+    """dB -> tenths of a dB."""
+    return int(round(db * EQ_GAIN_STEPS_PER_DB))
+
+
+def eq_freq_raw(hz: float) -> int:
+    """Inverse of eq_freq_hz, clamped to the console's range."""
+    hz = max(EQ_FREQ_HZ_MIN, min(EQ_FREQ_HZ_MAX, hz))
+    span = EQ_FREQ_RAW_MAX - EQ_FREQ_RAW_MIN
+    ratio = EQ_FREQ_HZ_MAX / EQ_FREQ_HZ_MIN
+    return int(round(EQ_FREQ_RAW_MIN + span * (math.log(hz / EQ_FREQ_HZ_MIN) / math.log(ratio))))
+
+
+def eq_q_raw(q: float) -> int:
+    """Inverse of eq_q, clamped to the bell range (Q 10 .. 0.1)."""
+    q = max(0.1, min(10.0, q))
+    return int(round(40 * math.log(q / 10) / math.log(0.1 / 10)))

@@ -86,6 +86,12 @@ def describe(event: ev.MixerEvent) -> Tuple[str, Optional[int], str]:
         return name, event.channel, f"{protocol.decode_value(raw):+4d} / 63  ({event.value:+.3f})"
     if isinstance(event, ev.SurroundMoved):
         return name, event.channel, f"{event.axis.upper()} {protocol.decode_value(raw):+4d} / 63"
+    if isinstance(event, ev.EqOnChanged):
+        who = {"master": "master", "aux": f"aux{(event.channel or 0) + 1}"}.get(
+            event.selector, channel_label(event.channel))
+        return name, event.channel, f"{who} EQ: {'ON' if event.on else 'BYPASS'}"
+    if isinstance(event, ev.AttenuationChanged):
+        return name, event.channel, f"ATT {event.db:+.1f} dB"
     if isinstance(event, ev.SoloChanged):
         return name, event.channel, "SOLO" if event.soloed else "solo off"
     if isinstance(event, ev.EqChanged):

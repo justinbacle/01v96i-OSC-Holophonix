@@ -112,6 +112,14 @@ class HolophonixBackend:
     def _on_aux_on(self, e: ev.AuxOnChanged) -> None:
         logging.info(f"Aux ON: aux={e.aux} on={e.on}")
 
+    def _on_eq_on(self, e: ev.EqOnChanged) -> None:
+        # TODO: unmapped -- Holophonix has no whole-EQ bypass address yet.
+        logging.info(f"EQ on/off: {e.selector} channel={e.channel} on={e.on}")
+
+    def _on_attenuation(self, e: ev.AttenuationChanged) -> None:
+        # TODO: unmapped -- no Holophonix equivalent for the ATT trim yet.
+        logging.info(f"Attenuation: channel={e.channel + 1} {e.db:+.1f} dB")
+
     def _on_solo(self, e: ev.SoloChanged) -> None:
         logging.info(f"Solo: channel={e.channel + 1} soloed={e.soloed}")
 
@@ -132,6 +140,8 @@ class HolophonixBackend:
         ev.BusOnChanged: _on_bus_on,
         ev.AuxOnChanged: _on_aux_on,
         ev.SoloChanged: _on_solo,
+        ev.EqOnChanged: _on_eq_on,
+        ev.AttenuationChanged: _on_attenuation,
         ev.ConsoleStatus: _on_status,
         ev.Keepalive: lambda self, e: None,
         ev.Ignored: lambda self, e: None,
