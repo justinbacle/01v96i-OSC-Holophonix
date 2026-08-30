@@ -9,12 +9,15 @@ from __future__ import annotations
 import argparse
 import logging
 import threading
+import time
 
 from backends.holophonix import HolophonixBackend
+import mido
+
 from midi import ports
 from midi.midi_sysex import MidiSysexListener
 from osc.osc_sender import OSCSender
-from yamaha01v96i import parse
+from yamaha01v96i import encoder, parse
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,8 +28,35 @@ def build_parser() -> argparse.ArgumentParser:
                                           "(substring match; skips the prompt)")
     parser.add_argument("--midi-out", help="MIDI output port: the console's Rx PORT "
                                            "(substring match; enables sending)")
+    parser.add_argument("--no-sync", dest="sync", action="store_false",
+                        help="do not ask the console for its state on startup")
     parser.add_argument("-v", "--verbose", action="store_true", help="log every OSC send")
     return parser
+
+
+# Requests are answered immediately, so a whole burst overruns the input buffer
+# while nothing is draining it: sending all 805 at once loses about 60% of the
+# replies. Chunks of 64 with a short pause let the listener keep up and every
+# reply arrives, in roughly a third of a second.
+SYNC_CHUNK = 64
+SYNC_PAUSE_S = 0.02
+SYNC_STARTUP_DELAY_S = 0.3
+
+
+def request_state(outport) -> None:
+    """Ask the console for everything, paced so no replies are dropped.
+
+    Runs after the listener is up: the replies are ordinary parameter changes, so
+    they arrive through the normal decode path and populate the backend with no
+    special casing.
+    """
+    time.sleep(SYNC_STARTUP_DELAY_S)  # let the listener come up first
+    requests = encoder.state_requests()
+    logging.info(f"Requesting console state ({len(requests)} parameters)...")
+    for start in range(0, len(requests), SYNC_CHUNK):
+        for payload in requests[start:start + SYNC_CHUNK]:
+            outport.send(mido.Message("sysex", data=payload))
+        time.sleep(SYNC_PAUSE_S)
 
 
 def main() -> int:
@@ -36,7 +66,15 @@ def main() -> int:
 
     backend = HolophonixBackend(OSCSender(args.ip, args.port))
 
-    midi_port = ports.resolve_input(args.midi_in) or ports.select_interactively()
+    midi_port = ports.resolve_input(args.midi_in)
+    midi_out = ports.resolve_output(args.midi_out)
+    if not midi_port or not midi_out:
+        # Probing finds the working pair whatever the console's port assignments are.
+        detected_in, detected_out = ports.detect_console()
+        midi_port = midi_port or detected_in
+        midi_out = midi_out or detected_out
+    if not midi_port:
+        midi_port = ports.select_interactively()
     if not midi_port:
         return 1
 
@@ -51,12 +89,26 @@ def main() -> int:
     listener = MidiSysexListener(midi_port)
     listener.add_callback(on_sysex)
 
+    outport = None
+    if midi_out:
+        outport = mido.open_output(midi_out)  # pyright: ignore[reportAttributeAccessIssue]
+        logging.info(f"Sending to {midi_out}")
+    elif args.sync:
+        logging.warning("No MIDI output found: starting without console state.")
+
+    if args.sync and outport is not None:
+        threading.Thread(target=request_state, args=(outport,), daemon=True).start()
+
     def check_exit() -> None:
         while True:
             try:
                 if input().strip().lower() == "q":
                     break
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
+                # No console attached (service, nohup, redirected stdin): there is
+                # no one to type 'q', so stop watching rather than stopping the bridge.
+                return
+            except KeyboardInterrupt:
                 break
         listener.stop()
         logging.info("Exiting Sysex listener...")

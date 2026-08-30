@@ -149,3 +149,45 @@ def solo(channel: int, soloed: bool) -> List[int]:
 
 def request_channel_fader(channel: int) -> List[int]:
     return parameter_request(_parser.EL_CH_FADER, 0, channel)
+
+
+def channel_bytes() -> List[int]:
+    """Every channel byte worth requesting: the mono channels plus each ST-IN L slot.
+
+    The ST-IN R slots are skipped -- they are linked and carry a duplicate value.
+    """
+    mono = list(range(p.MONO_CHANNELS))
+    st_in = [p.ST_IN_FIRST + 2 * i for i in range(p.ST_IN_COUNT)]
+    return mono + st_in
+
+
+def state_requests() -> List[List[int]]:
+    """Requests covering everything the parser understands.
+
+    Replies arrive as ordinary parameter changes, so feeding them through the
+    normal parse -> backend path populates the backend with no special casing.
+    Roughly 800 messages; the console answered 32 in 16 ms, so this completes
+    in well under a second.
+    """
+    requests: List[List[int]] = []
+    for channel in channel_bytes():
+        requests.append(parameter_request(_parser.EL_CH_FADER, 0, channel))
+        requests.append(parameter_request(_parser.EL_CH_ON, 0, channel))
+        requests.append(parameter_request(_parser.EL_PAN, 0, channel))
+        requests.append(parameter_request(_parser.EL_ATT, 0, channel))
+        for axis_param in _parser.SURROUND_AXES:
+            requests.append(parameter_request(_parser.EL_SURROUND, axis_param, channel))
+        for eq_param in list(p.EQ_PARAMS) + [_parser.EQ_ON_PARAM]:
+            requests.append(parameter_request(_parser.EL_CH_EQ, eq_param, channel))
+
+    requests.append(parameter_request(_parser.EL_MASTER_FADER, 0, 0))
+    requests.append(parameter_request(_parser.EL_MASTER_ON, 0, 0))
+    for eq_param in list(p.EQ_PARAMS) + [_parser.EQ_ON_PARAM]:
+        requests.append(parameter_request(_parser.EL_MASTER_EQ, eq_param, 0))
+
+    for index in range(8):
+        requests.append(parameter_request(_parser.EL_AUX_FADER, 0, index))
+        requests.append(parameter_request(_parser.EL_AUX_ON, 0, index))
+        requests.append(parameter_request(_parser.EL_BUS_FADER, 0, index))
+        requests.append(parameter_request(_parser.EL_BUS_ON, 0, index))
+    return requests

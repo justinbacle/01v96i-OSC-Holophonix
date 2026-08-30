@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from yamaha01v96i import encoder, parse  # noqa: E402
+from yamaha01v96i import protocol  # noqa: E402
 from yamaha01v96i import events as ev  # noqa: E402
 
 
@@ -120,6 +121,15 @@ class EncoderParityTest(unittest.TestCase):
         # ST-IN 1 is track index 32; the L slot is the one that carries the value.
         self.assert_round_trip(encoder.channel_fader_db(32, 0.0), ev.FaderMoved,
                                channel=32, db=0.0)
+
+    def test_state_requests(self):
+        requests = encoder.state_requests()
+        self.assertTrue(all(len(r) == 8 for r in requests), "requests carry no data bytes")
+        self.assertEqual(len(requests), len(set(map(tuple, requests))), "no duplicates")
+        # ST-IN right slots are linked duplicates and must not be asked for.
+        st_right = {protocol.ST_IN_FIRST + 2 * i + 1 for i in range(protocol.ST_IN_COUNT)}
+        asked = {r[7] for r in requests}
+        self.assertFalse(asked & st_right, "must not request linked R slots")
 
     def test_parameter_request_is_distinct(self):
         request = encoder.request_channel_fader(0)

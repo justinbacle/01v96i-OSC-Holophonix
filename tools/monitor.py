@@ -9,19 +9,26 @@ worth discovering (EQ bands 2-4, buses, other console modes).
 Everything is also appended to a JSONL log, so a session can be analysed
 afterwards exactly like a ``tools/capture.py`` run.
 
+Two views: a live stream of decoded messages, and a state table with one row per
+strip. With no arguments it probes for the console, reads its whole state and
+opens in the state view.
+
 Usage:
-    python3 tools/monitor.py                 # auto-detect the console port
-    python3 tools/monitor.py --port "..."    # explicit port name
-    python3 tools/monitor.py --out log.jsonl # explicit log file
+    python3 tools/monitor.py                    # detect the console, read state
+    python3 tools/monitor.py --port "MIDI 5"     # override the input port
+    python3 tools/monitor.py --out log.jsonl     # explicit log file
 
 Keys:
-    q  quit          space  pause/resume      c  clear stream
-    k  show/hide keepalive                    u  unknown messages only
+    q  quit                    s  switch stream <-> state view
+    r  re-read console state (needs --midi-out)
+    space  pause/resume        c  clear stream
+    k  show/hide keepalive     u  unknown messages only
 """
 from __future__ import annotations
 
 import argparse
 import curses
+import threading
 import json
 import sys
 import time
@@ -41,7 +48,8 @@ except ImportError:  # pragma: no cover
     sys.exit(1)
 
 from yamaha01v96i import events as ev  # noqa: E402
-from yamaha01v96i import parser, protocol  # noqa: E402
+from midi import ports as midi_ports  # noqa: E402
+from yamaha01v96i import encoder, parser, protocol  # noqa: E402
 
 
 def channel_label(index: Optional[int]) -> str:
@@ -128,13 +136,45 @@ class MonitorState:
         self.stream: Deque[Dict[str, Any]] = deque(maxlen=maxlen)
         self.counts: Counter = Counter()
         self.channels: Dict[int, Dict[str, str]] = {}
+        # Full console state, one row per strip, for the state view.
+        self.strips: Dict[Any, Dict[str, str]] = {}
         self.master: Dict[str, str] = {}
         self.eq: Dict[str, str] = {}
         self.started = time.time()
         self.total = 0
 
+    def record_strip(self, event: ev.MixerEvent) -> None:
+        """Fold an event into the per-strip state table."""
+        def cell(key, field, text):
+            self.strips.setdefault(key, {})[field] = text
+
+        if isinstance(event, ev.FaderMoved):
+            cell(event.channel, "fader", "-inf" if event.db <= -89 else f"{event.db:+.1f}")
+        elif isinstance(event, ev.MuteChanged):
+            cell(event.channel, "on", "MUTE" if event.muted else "on")
+        elif isinstance(event, ev.PanMoved):
+            cell(event.channel, "pan", f"{event.value:+.2f}")
+        elif isinstance(event, ev.AttenuationChanged):
+            cell(event.channel, "att", f"{event.db:+.1f}")
+        elif isinstance(event, ev.SurroundMoved):
+            cell(event.channel, event.axis, f"{event.value:+.2f}")
+        elif isinstance(event, ev.SoloChanged):
+            cell(event.channel, "solo", "SOLO" if event.soloed else "")
+        elif isinstance(event, ev.EqOnChanged) and event.selector == "channel":
+            cell(event.channel, "eq", "on" if event.on else "byp")
+        elif isinstance(event, ev.EqChanged) and event.selector == "channel":
+            if event.gain_db is not None:
+                cell(event.channel, f"eq{event.band}", f"{event.gain_db:+.1f}")
+        elif isinstance(event, ev.MasterFaderMoved):
+            cell("master", "fader", "-inf" if event.db <= -99 else f"{event.db:+.1f}")
+        elif isinstance(event, ev.MasterMuteChanged):
+            cell("master", "on", "MUTE" if event.muted else "on")
+
     def add(self, data: List[int], hex_str: str) -> Dict[str, Any]:
         label, channel, value = decode(data)
+        event = parser.parse(data)
+        if event is not None:
+            self.record_strip(event)
         self.counts[label] += 1
         self.total += 1
 
@@ -170,6 +210,24 @@ class MonitorState:
         return {"label": label, "channel": channel, "value": value}
 
 
+# The console answers immediately, so a whole burst overruns the input buffer
+# while nothing is draining it. Chunks with a short pause let the reader keep up.
+SYNC_CHUNK = 64
+SYNC_PAUSE_S = 0.02
+
+
+def request_state(outport, done: threading.Event) -> None:
+    """Ask the console for everything; replies arrive through the normal loop."""
+    try:
+        requests = encoder.state_requests()
+        for start in range(0, len(requests), SYNC_CHUNK):
+            for payload in requests[start:start + SYNC_CHUNK]:
+                outport.send(mido.Message("sysex", data=payload))
+            time.sleep(SYNC_PAUSE_S)
+    finally:
+        done.set()
+
+
 def pick_port(name: Optional[str]) -> str:
     """Return an input port name: the one given, or the first 01V96i port."""
     ports = mido.get_input_names()  # pyright: ignore[reportAttributeAccessIssue]
@@ -199,6 +257,54 @@ def put(win: "curses._CursesWindow", y: int, x: int, text: str, attr: int = 0) -
         win.addnstr(y, x, clipped, len(clipped), attr)
     except curses.error:
         pass
+
+
+STRIP_COLUMNS = [
+    ("fader", 8), ("on", 5), ("pan", 6), ("att", 6), ("solo", 5),
+    ("eq", 4), ("eq1", 6), ("eq2", 6), ("eq3", 6), ("eq4", 6), ("x", 6), ("y", 6),
+]
+
+
+def strip_label(key) -> str:
+    if key == "master":
+        return "master"
+    if key < protocol.MONO_CHANNELS:
+        return f"ch{key + 1}"
+    return f"ST{key - protocol.MONO_CHANNELS + 1}"
+
+
+def draw_state(stdscr: "curses._CursesWindow", state: "MonitorState", port_name: str,
+               syncing: bool) -> None:
+    """Full console state, one row per strip."""
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    filled = sum(len(v) for v in state.strips.values())
+    header = f" STATE   {port_name}   {len(state.strips)} strips, {filled} values "
+    if syncing:
+        header += "  [requesting...]"
+    put(stdscr, 0, 0, header.ljust(width), curses.color_pair(1) | curses.A_BOLD)
+
+    columns = "".join(f"{name:>{w}}" for name, w in STRIP_COLUMNS)
+    put(stdscr, 1, 0, f"{'':>7}{columns}", curses.color_pair(2) | curses.A_BOLD)
+
+    keys = sorted((k for k in state.strips if k != "master"), key=lambda k: (k is None, k))
+    if "master" in state.strips:
+        keys.append("master")
+    for row, key in enumerate(keys):
+        y = 2 + row
+        if y >= height - 1:
+            break
+        values = state.strips[key]
+        cells = "".join(f"{values.get(name, ''):>{w}}" for name, w in STRIP_COLUMNS)
+        attr = curses.A_BOLD if key == "master" else 0
+        put(stdscr, y, 0, f"{strip_label(key):>7}{cells}", attr)
+
+    if not state.strips:
+        put(stdscr, 3, 2, "No state yet - the console did not answer a probe. "
+                          "Move a control, or press r to retry.")
+    footer = " q quit   s stream view   r re-sync   c clear "
+    put(stdscr, height - 1, 0, footer.ljust(width), curses.color_pair(1))
+    stdscr.refresh()
 
 
 def draw(stdscr: "curses._CursesWindow", state: MonitorState, port_name: str, flags: Dict[str, bool]) -> None:
@@ -263,12 +369,13 @@ def draw(stdscr: "curses._CursesWindow", state: MonitorState, port_name: str, fl
             put(stdscr, y, split, f"  {channel_label(chan):<6}{summary}")
             y += 1
 
-    footer = " q quit   space pause   c clear   k keepalive   u unknown-only "
+    footer = (" q quit   s STATE view   r re-sync   space pause   c clear"
+              "   k keepalive   u unknown-only ")
     put(stdscr, height - 1, 0, footer.ljust(width), curses.color_pair(1))
     stdscr.refresh()
 
 
-def run(stdscr: "curses._CursesWindow", port_name: str, out_path: Path) -> None:
+def run(stdscr: "curses._CursesWindow", port_name: str, out_path: Path, outport=None) -> None:
     curses.curs_set(0)
     stdscr.nodelay(True)
     curses.start_color()
@@ -278,8 +385,20 @@ def run(stdscr: "curses._CursesWindow", port_name: str, out_path: Path) -> None:
     curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_YELLOW)
 
     state = MonitorState()
-    flags = {"paused": False, "show_keepalive": False, "unknown_only": False}
+    flags = {"paused": False, "show_keepalive": False, "unknown_only": False,
+             "state_view": bool(outport)}
+    sync_done = threading.Event()
+    sync_done.set()
+
+    def start_sync() -> None:
+        if outport is None or not sync_done.is_set():
+            return
+        sync_done.clear()
+        threading.Thread(target=request_state, args=(outport, sync_done), daemon=True).start()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if outport is not None:
+        start_sync()
 
     with mido.open_input(port_name) as inport, out_path.open("a") as log:  # pyright: ignore
         last_draw = 0.0
@@ -287,6 +406,10 @@ def run(stdscr: "curses._CursesWindow", port_name: str, out_path: Path) -> None:
             key = stdscr.getch()
             if key in (ord("q"), ord("Q")):
                 return
+            if key in (ord("s"), ord("S")):
+                flags["state_view"] = not flags["state_view"]
+            elif key in (ord("r"), ord("R")):
+                start_sync()
             if key == ord(" "):
                 flags["paused"] = not flags["paused"]
             elif key in (ord("c"), ord("C")):
@@ -319,7 +442,10 @@ def run(stdscr: "curses._CursesWindow", port_name: str, out_path: Path) -> None:
 
             now = time.time()
             if now - last_draw > 0.05:
-                draw(stdscr, state, port_name, flags)
+                if flags["state_view"]:
+                    draw_state(stdscr, state, port_name, not sync_done.is_set())
+                else:
+                    draw(stdscr, state, port_name, flags)
                 last_draw = now
             time.sleep(0.005)
 
@@ -328,15 +454,34 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Live TUI monitor for 01V96i SysEx traffic.")
     parser.add_argument("--port", help="MIDI input port name (substring match); default: first 01V96i port")
     parser.add_argument("--out", default=None, help="JSONL log file (default: captures/monitor_<timestamp>.jsonl)")
+    parser.add_argument("--midi-out", help="MIDI output port (the console's Rx PORT); "
+                                           "enables asking the console for its state")
     args = parser.parse_args()
 
-    port_name = pick_port(args.port)
+    detected_out = None
+    if args.port:
+        port_name = pick_port(args.port)
+    else:
+        port_name, detected_out = midi_ports.detect_console()
+        if port_name is None:
+            raise SystemExit("No 01V96i MIDI input found.")
     out_path = (
         Path(args.out)
         if args.out
         else REPO_ROOT / "captures" / f"monitor_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
     )
-    curses.wrapper(run, port_name, out_path)
+    out_name = detected_out
+    if args.midi_out:
+        matches = [n for n in mido.get_output_names() if args.midi_out.lower() in n.lower()]
+        if not matches:
+            raise SystemExit(f"No MIDI output matching {args.midi_out!r}")
+        out_name = matches[0]
+    outport = mido.open_output(out_name) if out_name else None  # pyright: ignore
+    try:
+        curses.wrapper(run, port_name, out_path, outport)
+    finally:
+        if outport is not None:
+            outport.close()
     print(f"Log written to {out_path}")
     return 0
 

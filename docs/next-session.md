@@ -23,18 +23,23 @@ logged. That mapping is an open product decision, not a protocol gap.
 
 ## Next, in order
 
-1. **Rx features.** Send mute, pan and EQ the way the fader already works. All
-   are `parameter_change()` with a different element; the encoder is the mirror
-   of the parser, so a message can be round-tripped through `parse()` before it
-   goes out.
-2. **`parameter_request()`.** Written, never fired at the console. Unknown:
-   whether it is answered, on which port, and how fast requests can be issued
-   back to back. This is what makes startup state sync possible — today the
-   bridge is blind until something moves.
-3. **Tx/Rx parity.** Anything the bridge can decode it should be able to send.
-4. **Only then**, the DAW ports (USB 2–3 here), which speak Mackie Control /
+1. ~~Rx features~~ — done. Everything the parser decodes, the encoder can send,
+   with `tests/test_encoder_parity.py` proving the two agree. Fader, ON, pan and
+   the EQ controls are confirmed moving the console.
+2. ~~`parameter_request()`~~ — done. Requests to the Rx PORT are answered on the
+   Tx PORT, 32 of them in 16 ms with no throttling. `main.py --sync` issues 805
+   requests at startup and populates the backend from real console state.
+3. **Decide the Holophonix address scheme** for what decodes but goes nowhere:
+   aux sends and masters, bus faders, bus/aux ON, solo, the EQ filter enable,
+   EQ on/off and ATT. Also the §5.2 question — which Holophonix filter slot a
+   band 1 HPF maps to. This needs a decision, not more protocol work.
+4. **Optional protocol coverage**, if the scope becomes a general control
+   surface rather than a spatial bridge: dynamics (gate/comp), aux send ON and
+   pre/post, channel delay, phase invert, routing, scene recall (Program Change,
+   a different message class), and the hypothesised bus EQ element.
+5. **Only then**, the DAW ports (USB 2–3 here), which speak Mackie Control /
    HUI. Possibly a better basis for the REAPER connector than SysEx — but that
-   decision comes after parity.
+   decision comes after the address scheme.
 
 ## Running it
 
