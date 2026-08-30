@@ -112,6 +112,3 @@ Thumbs.db
 
 # Capture logs from tools/capture.py and tools/monitor.py
 captures/
-
-# Vendor documentation fetched for reference (large PDFs)
-.deps/

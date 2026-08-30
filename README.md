@@ -129,7 +129,9 @@ tools/capture.py           # Bulk MIDI capture & annotation logger
 tools/osc_dump.py          # Stand-in OSC receiver for testing without Holophonix
 tests/                     # Unit tests + golden OSC snapshot (no MIDI hardware needed)
 docs/01v96i.md             # Reverse-engineered 01V96i SysEx reference (authoritative)
+docs/features.md           # What the console offers vs what the bridge handles
 docs/refactor-plan.md      # Refactor plan: reusable 01v96i API + pluggable backends
+docs/manuals/              # Yamaha reference and owner's manuals (the authority)
 requirements.txt
 ```
 
