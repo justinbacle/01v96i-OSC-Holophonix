@@ -2,8 +2,8 @@
 
 State as of 2026-08-30. Short by design — the protocol reference is
 [docs/01v96i.md](01v96i.md), the capability inventory is
-[docs/features.md](features.md), and the long-range plan is
-[docs/refactor-plan.md](refactor-plan.md).
+[docs/features.md](features.md), and the REAPER setup is
+[docs/reaper.md](reaper.md).
 
 ## Where things stand
 
