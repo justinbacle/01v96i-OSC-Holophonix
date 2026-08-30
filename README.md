@@ -1,18 +1,43 @@
-# 01v96i-OSC
+# 01v96i-bridge
 
-A MIDI-to-OSC bridge that translates control surface input from a **Yamaha 01v96i digital mixer**
-into OSC messages for a **Holophonix immersive audio system**.
+Turns a **Yamaha 01V96i digital mixer** into a control surface for whatever you point it
+at. The console's faders, mutes, pan, surround position, solo and EQ are decoded from its
+MIDI SysEx and translated to a *backend*; today that means **REAPER** or **Holophonix**,
+and the console can be driven back the other way.
 
-The mixer acts as a physical control surface: faders, pan knobs, mutes, surround pan controls,
-and EQ parameters are all captured via MIDI SysEx and forwarded as OSC commands to Holophonix
-for spatial audio control.
+It runs on the console's **normal mixing layer**, so the desk stays a mixer while it
+controls something else — no mode switch, no REMOTE layer.
+
+```bash
+./bridge
+```
+
+No arguments. It probes for the console, works out what to talk to, and reads the
+console's whole state so both sides start in step.
+
+## Backends
+
+| Backend | Status | Notes |
+| --- | --- | --- |
+| **REAPER** (OSC) | working, both directions | Faders, mutes, solo, pan, master level. See [docs/reaper.md](docs/reaper.md) |
+| **Holophonix** (OSC) | outbound; spatial controls mapped | Gain, mute, azimuth/distance from surround X/Y, EQ |
+| ADM-OSC | not implemented | Open standard for object positions |
+| MCU / HUI | not implemented | The console speaks HUI natively on its DAW ports; see [docs/features.md](docs/features.md) |
+
+Selected automatically — REAPER if it has an OSC surface configured, otherwise
+Holophonix — or forced with `--backend`.
 
 ## How it works
 
-1. The application listens for MIDI SysEx messages from the Yamaha 01v96i.
-2. Each message is matched against a set of registered patterns (masks).
-3. On match, a handler converts the raw MIDI value into the appropriate OSC parameter and sends
-   it to the Holophonix host over UDP.
+1. `yamaha01v96i/` decodes the console's SysEx into semantic events. It is pure Python
+   over `list[int]`: no MIDI, no OSC, no I/O, and no knowledge of any backend.
+2. A backend in `backends/` turns those events into its own address scheme.
+3. `yamaha01v96i/encoder.py` is the mirror image, so anything the bridge can read it can
+   also send — which is what moves the console's motorised faders.
+
+The protocol itself is reverse-engineered and documented in
+[docs/01v96i.md](docs/01v96i.md), checked against Yamaha's own manuals in
+[docs/manuals/](docs/manuals/). Every message the console emits in normal use is decoded.
 
 ## Setup
 
@@ -75,7 +100,7 @@ python3 main.py [--ip <address>] [--port <port>]
 | `--ip` | `192.168.1.104` | OSC destination IP |
 | `--port` | `4003` | OSC destination port |
 
-## OSC address mapping
+## Holophonix OSC address mapping
 
 | Mixer control | OSC address | Value range |
 | --- | --- | --- |
@@ -93,42 +118,40 @@ python3 main.py [--ip <address>] [--port <port>]
 
 ---
 
-## Implementation status
+## Status
 
-### Done
+**The console side is complete.** Channels 1–32, ST-IN 1–4, aux sends and masters, buses,
+all four EQ bands on channel/aux/master, solo, ATT, EQ on/off and the console's own status
+messages are all decoded — zero unrecognised messages across ~12,600 captured. Everything
+decoded can also be sent back, so the console's motorised faders and lamps follow, and
+`--sync` reads the console's whole state at startup (~800 parameters in ~300 ms). See
+[docs/features.md](docs/features.md) for what the console offers against what is handled.
 
-- **Channel faders** — all 16 channels; 10-bit position index → dB via a measured fader law
-- **Master fader** — same law, ending at unity instead of +10 dB
-- **Channel and master mute** — both the edit-buffer and backup-memory forms, which the
-  console emits together for every press
-- **Pan (L/R)** — the console's own −63…+63 value, mapped to ±45° azimuth
-- **Surround X/Y** — per-channel X/Y state → azimuth + distance (polar)
-- **EQ, all four bands** — gain, frequency, Q and filter type, plus the HPF/LPF enable that
-  bands 1 and 4 send in place of a gain
-- **MIDI port selection** — interactive on startup
-- **OSC transport** — UDP via `python-osc`
+**REAPER is working in both directions** — faders, mutes, solo, pan and master level, with
+master mute outbound only because REAPER does not expose it. See
+[docs/reaper.md](docs/reaper.md).
 
-### Decoded but not sent
+**Holophonix is outbound only**, and its spatial controls are mapped: gain, mute, azimuth
+from pan, azimuth + distance from surround X/Y, and EQ.
 
-These are fully decoded and logged, but have no Holophonix address yet — the mapping is
-undecided (see [docs/01v96i.md](docs/01v96i.md) §5.2):
+### Decoded but unmapped
 
-- **Aux sends and aux masters**, **bus faders**, **bus/aux ON**
-- **Solo**
-- **EQ filter enable** for bands 1 and 4
+Fully decoded and logged, but with no Holophonix address chosen yet — a mapping decision
+rather than a protocol gap (see [docs/01v96i.md](docs/01v96i.md) §5.2):
 
-### Not yet implemented
+aux sends and aux masters, bus faders, bus/aux ON, solo, EQ on/off, the bands 1/4 filter
+enable, and ATT.
 
-- **ADM-OSC position mode** — alternative output mode using the
-  [ADM-OSC](https://github.com/immersive-audio-live/ADM-OSC) open standard instead of the
-  proprietary Holophonix addresses. Requires:
-  - Cartesian output: `/adm/obj/{n}/x`, `/adm/obj/{n}/y` (range −1 to 1) from mixer surround X/Y
-  - Polar output: `/adm/obj/{n}/azim`, `/adm/obj/{n}/dist` (azimuth −180 to 180°, distance 0 to 1)
-  - Gain: `/adm/obj/{n}/gain` (linear 0–1) instead of dB
-  - A runtime mode switch (Holophonix vs ADM-OSC) so both targets can be supported
-- **Configuration file** — OSC host/port are settable with `--ip`/`--port` but not persisted
-- **Other mixer parameters** — compressor, gates, reverb sends, aux routing, etc. (scope TBD)
-- **Bidirectional sync** — no state received from Holophonix; mixer position is not updated on connect
+### Not implemented
+
+- **ADM-OSC** — the [open standard](https://github.com/immersive-audio-live/ADM-OSC) for
+  object positions, as an alternative to Holophonix's proprietary addresses: `/adm/obj/{n}/x`
+  and `/y` from surround X/Y, or `/azim` and `/dist` in polar, with linear gain
+- **Holophonix feedback** — the return path exists for REAPER; nothing is received from
+  Holophonix, so the console is not updated from its state
+- **Console dynamics and routing** — gate, compressor, delay, phase, insert, routing, aux
+  send ON and pre/post, scene recall
+- **Configuration file** — everything is discovered or passed as flags; nothing is persisted
 
 ## Project structure
 
