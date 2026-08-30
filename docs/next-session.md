@@ -57,8 +57,10 @@ Flags exist to override the discovery (`--backend`, `--ip`, `--port`, `--midi-in
   resulting 215 OSC calls. Regenerate with `--update` only when a behaviour change is
   intended, and read the diff.
 - **CI runs on every push** (`.github/workflows/tests.yml`): the suite on Linux across
-  Python 3.10–3.13, plus one macOS and one Windows job to keep the cross-platform paths
-  honest, and flake8. No test needs MIDI hardware.
+  Python 3.13–3.14, plus one macOS and one Windows job to keep the cross-platform paths
+  honest, and flake8. Python 3.13 and 3.14 only -- older versions were being
+  tested to defend a compatibility claim nothing relied on. No test needs MIDI
+  hardware.
 - **The console does not echo** parameter changes it receives — it only reports moves
   made at its front panel. Silence after sending is normal; watch the console.
 - **REAPER's OSC mode decides whether it talks back.** Receive-only means no feedback at

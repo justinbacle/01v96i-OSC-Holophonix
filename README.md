@@ -41,7 +41,7 @@ The protocol itself is reverse-engineered and documented in
 
 ## Setup
 
-Requires Python 3.10+ and a MIDI input the mixer is connected to.
+Requires Python 3.13+ and a MIDI input the mixer is connected to.
 
 ```bash
 # One-time on Ubuntu/Debian: venv support, the Python headers and ALSA headers.

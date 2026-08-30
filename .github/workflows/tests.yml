@@ -13,16 +13,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux is the development platform, so it carries the version spread.
+        # 3.14 is the development version; 3.13 is the previous release.
         # macOS and Windows are here to keep the cross-platform paths honest --
         # REAPER config discovery and the port lookup differ on each.
         os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.13", "3.14"]
         include:
           - os: macos-latest
-            python: "3.13"
+            python: "3.14"
           - os: windows-latest
-            python: "3.13"
+            python: "3.14"
 
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - run: pip install flake8
       # Line length comes from setup.cfg.
       - run: flake8 main.py yamaha01v96i backends midi osc tools tests
