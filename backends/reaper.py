@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 
@@ -123,6 +124,36 @@ def discover_osc_surface(path: Optional[Path] = None) -> Optional[OscSurface]:
         except (ValueError, IndexError):
             continue
     return None
+
+
+def discover_listen_port() -> Optional[int]:
+    """The UDP port REAPER is receiving OSC on, read from the socket table.
+
+    In REAPER's "Device IP/Port" mode there is no configurable local port -- it
+    binds an ephemeral one that differs every launch. Without this the bridge
+    cannot send anything until REAPER happens to send first, so its port is read
+    from the system instead. Returns None if REAPER is not running or has more
+    than one UDP socket bound, in which case the address is still learned from
+    whatever REAPER sends.
+    """
+    try:
+        out = subprocess.run(["ss", "-ulnpH"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    ports = set()
+    for line in out.splitlines():
+        if "reaper" not in line:
+            continue
+        for field in line.split():
+            if ":" in field and field.rsplit(":", 1)[-1].isdigit():
+                ports.add(int(field.rsplit(":", 1)[-1]))
+    ports.discard(0)
+    if len(ports) != 1:
+        logging.debug(f"not inferring REAPER's OSC port from sockets {sorted(ports)}")
+        return None
+    return ports.pop()
 
 
 class ReaperBackend:

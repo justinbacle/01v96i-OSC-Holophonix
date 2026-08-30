@@ -67,43 +67,45 @@ filter-slot mapping in [docs/01v96i.md](01v96i.md) §5.2, and what a stereo inpu
 should mean. Plus one build task — the bridge can only *send* OSC, so Holophonix cannot
 drive the console (see § Bidirectional below).
 
-### DAW control — the console is a HUI surface, not MCU
+### REAPER — working, over OSC on the normal mixing layer
 
-The console has a **REMOTE layer** (LAYER `[REMOTE]` button) whose targets are Pro Tools,
-Nuendo, Cubase, "General DAW" and User Defined. On that layer the faders and `[ON]`
-buttons drive the external device over the **DAW port pair** (USB 2–3 on this console).
+The console drives REAPER, and REAPER drives the console, while the console stays a
+mixer. The REMOTE layer is **not** used: it is a mode that takes the console over, and it
+speaks HUI, which is the legacy Pro Tools protocol rather than MCU. On this machine
+REAPER also crashes when a HUI surface is added — `SIGABRT` inside ALSA's
+`snd_rawmidi_open`, called from `reaper_csurf.so` — so that route is closed regardless.
 
-The important detail: the manual describes "General DAW" as *"DAW software that supports
-the protocol used by Pro Tools"* — that is **HUI**. The words Mackie, MCU and Logic
-Control appear nowhere in the manual. HUI and MCU are different protocols: MCU came later
-and absorbed HUI's functionality plus more, and modern DAWs generally target MCU while HUI
-is legacy. **So the 01V96i is not an MCU surface**, which is the likely reason connecting
-it to REAPER did not work.
+Run `python3 main.py` with no arguments: it reads REAPER's own `reaper.ini` for the OSC
+surface, finds the port REAPER is listening on, probes for the console, and syncs state.
 
-That leaves three routes, and the third is much cheaper than the other two:
+| Control | Console → REAPER | REAPER → Console |
+| --- | --- | --- |
+| Channel fader | `/track/N/volume/db`, real dB | yes |
+| Channel mute | `/track/N/mute` | yes |
+| Solo | `/track/N/solo` | yes |
+| Pan | `/track/N/pan`, normalized with centre 0.5 | yes |
+| Master fader | `/master/volume` via the measured taper | yes |
+| Master mute | `/action/18/cc` | **no — REAPER does not expose it** |
+| EQ, aux, bus, ATT, surround | — | — |
 
-1. **HUI into REAPER.** REAPER does list HUI support, but it is the legacy path and the
-   console's emulation is partial. Fiddly, and already tried without success.
-2. **Translate HUI to MCU.** Receive the console's HUI on the DAW ports and re-emit MCU.
-   A whole second decoder, for a protocol we would have to reverse-engineer or find a
-   specification for. Substantial work.
-3. **REAPER over OSC, using the SysEx bridge we already have.** REAPER supports OSC
-   natively, with a configurable address pattern. Our existing pipeline already decodes
-   every fader, mute, pan and EQ move; a REAPER backend beside `backends/holophonix.py`
-   is then a mapping table, not a new protocol. It also works on the **normal mixing
-   layer**, so the console stays a mixer — whereas the REMOTE layer is a mode, and the
-   manual is explicit that "you cannot adjust the 01V96i's parameters unless you select a
-   different layer".
+Notes that cost time to learn:
 
-Route 3 is what [docs/refactor-plan.md](refactor-plan.md) §6.2 already proposed, and
-nothing found since argues against it. The trade-off is that OSC gives no transport
-control or scribble-strip feedback the way HUI/MCU would; if those matter, route 2 becomes
-worth its cost.
-
-The **User Defined** remote target is the remaining option worth knowing about: arbitrary
-MIDI messages assigned to the faders and `[ON]` buttons, in four recallable banks. That
-sidesteps HUI entirely and could emit whatever a translator wants — but it is limited to
-faders and ON buttons, and still costs the mixing layer.
+- **REAPER's OSC modes matter.** "Local port (receive only)" makes REAPER *never* send, so
+  feedback is impossible. Device IP/Port mode sends, but has no configurable local port —
+  REAPER binds an ephemeral one that changes each launch, which is why the bridge reads it
+  from the socket table.
+- **Master fader is not a dB scale.** `MASTER_VOLUME` accepts only a normalized value, and
+  REAPER's normalized scale is its own fader taper: 0 dB sits at ≈0.716 and 1.0 is +12 dB.
+  `REAPER_FADER_LAW` in `backends/reaper.py` is measured from REAPER itself.
+- **Master mute is one-way.** `Default.ReaperOSC` has no `MASTER_MUTE` pattern; muting
+  REAPER's master emits only `/track/mute` for the selected track, which would mute the
+  wrong console strip. Console → REAPER works through action 18, the *set* variant.
+- **Track banking is unresolved.** `DEVICE_TRACK_COUNT` is 8, and whether `/track/20`
+  means project track 20 or the 20th of an 8-track window is untested — the test project
+  had only two tracks. It only matters above 8 channels.
+- **ReaEQ is reachable** if wanted: it is addressed by slot (`hipass`, `loshelf`,
+  `band/@`, `hishelf`, `lopass`), mirroring the console's filter-type-picks-the-slot
+  behaviour, and `DEVICE_EQ INSERT` inserts it automatically. Not implemented.
 
 ### General control surface
 

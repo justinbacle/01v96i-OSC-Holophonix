@@ -12,7 +12,7 @@ import threading
 import time
 
 from backends.holophonix import HolophonixBackend
-from backends.reaper import ReaperBackend, discover_osc_surface
+from backends.reaper import ReaperBackend, discover_listen_port, discover_osc_surface
 import mido
 
 from midi import ports
@@ -27,7 +27,10 @@ BACKENDS = {"holophonix": HolophonixBackend, "reaper": ReaperBackend}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Yamaha 01v96i MIDI to OSC bridge")
+    parser = argparse.ArgumentParser(
+        prog="bridge",
+        description="Yamaha 01V96i MIDI to OSC bridge. Run with no arguments: it finds "
+                    "the console, and REAPER's OSC settings if REAPER is configured.")
     parser.add_argument("--ip", help="OSC destination IP (default: discovered)")
     parser.add_argument("--port", type=int, help="OSC destination port (default: discovered)")
     parser.add_argument("--midi-in", help="MIDI input port: the console's Tx PORT "
@@ -80,12 +83,15 @@ def main() -> int:
     surface = discover_osc_surface()
     backend_name = args.backend or ("reaper" if surface else "holophonix")
     if surface and backend_name == "reaper":
-        where = (f"sending to port {surface.send_to_port}" if surface.send_to_port
+        # In Device IP/Port mode REAPER has no configured local port, so find the
+        # ephemeral one it is bound to; otherwise nothing can be sent until REAPER
+        # happens to speak first.
+        port = args.port or surface.send_to_port or discover_listen_port() or 0
+        where = (f"sending to port {port}" if port
                  else "destination learned from REAPER's first message")
         logging.info(f"Found REAPER OSC surface {surface.name!r}: {where}, "
                      f"listening on {surface.listen_on_port}")
         ip = args.ip or "127.0.0.1"
-        port = args.port or surface.send_to_port
         listen_port = args.listen_port or surface.listen_on_port
         # A device IP of 0.0.0.0 still reaches a local listener on Linux, so it
         # needs no correction -- noted only for diagnosis.

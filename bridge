@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Launcher for the 01V96i bridge: uses the project venv, wherever it is called from.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python="$here/.venv/bin/python3"
+
+if [[ ! -x "$python" ]]; then
+    echo "No virtualenv at $here/.venv — see README § Setup" >&2
+    exit 1
+fi
+exec "$python" "$here/main.py" "$@"

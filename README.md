@@ -26,8 +26,11 @@ sudo apt install python3-venv python3-dev libasound2-dev
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 main.py
+./bridge
 ```
+
+`./bridge` needs no arguments: it probes for the console and, if REAPER has an OSC
+surface configured, reads its settings from REAPER's own config.
 
 On startup you will be prompted to select a MIDI input port. Type `q` + Enter to quit.
 
@@ -115,12 +118,14 @@ undecided (see [docs/01v96i.md](docs/01v96i.md) §5.2):
 ## Project structure
 
 ```text
+bridge                     # Launcher: runs main.py in the project venv
 main.py                    # CLI and wiring only
 yamaha01v96i/              # The 01V96i protocol API - no MIDI or OSC dependencies
     protocol.py            #   framing, value encoding, fader laws, EQ tables
     events.py              #   semantic events backends consume
     parser.py              #   message table; raw SysEx -> events
 backends/holophonix.py     # Holophonix OSC addresses (the only place they live)
+backends/reaper.py         # REAPER OSC addresses, both directions
 midi/ports.py              # Port listing, selection, keepalive detection
 midi/midi_sysex.py         # MIDI SysEx listener used by the run loop
 osc/osc_sender.py          # Thin UDP wrapper around python-osc
@@ -130,6 +135,7 @@ tools/osc_dump.py          # Stand-in OSC receiver for testing without Holophoni
 tests/                     # Unit tests + golden OSC snapshot (no MIDI hardware needed)
 docs/01v96i.md             # Reverse-engineered 01V96i SysEx reference (authoritative)
 docs/features.md           # What the console offers vs what the bridge handles
+docs/reaper.md             # Using the console as a REAPER control surface
 docs/refactor-plan.md      # Refactor plan: reusable 01v96i API + pluggable backends
 docs/manuals/              # Yamaha reference and owner's manuals (the authority)
 requirements.txt
