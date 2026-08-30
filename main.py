@@ -12,7 +12,7 @@ import threading
 import time
 
 from backends.holophonix import HolophonixBackend
-from backends.reaper import ReaperBackend
+from backends.reaper import ReaperBackend, discover_osc_surface
 import mido
 
 from midi import ports
@@ -28,14 +28,15 @@ BACKENDS = {"holophonix": HolophonixBackend, "reaper": ReaperBackend}
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Yamaha 01v96i MIDI to OSC bridge")
-    parser.add_argument("--ip", default="192.168.1.104", help="OSC destination IP")
-    parser.add_argument("--port", type=int, default=4003, help="OSC destination port")
+    parser.add_argument("--ip", help="OSC destination IP (default: discovered)")
+    parser.add_argument("--port", type=int, help="OSC destination port (default: discovered)")
     parser.add_argument("--midi-in", help="MIDI input port: the console's Tx PORT "
                                           "(substring match; skips the prompt)")
     parser.add_argument("--midi-out", help="MIDI output port: the console's Rx PORT "
                                            "(substring match; enables sending)")
-    parser.add_argument("--backend", choices=sorted(BACKENDS), default="holophonix",
-                        help="which OSC address scheme to emit")
+    parser.add_argument("--backend", choices=sorted(BACKENDS),
+                        help="OSC address scheme (default: reaper when REAPER has an "
+                             "OSC surface configured, else holophonix)")
     parser.add_argument("--listen-port", type=int,
                         help="UDP port to receive OSC feedback on, so the DAW can drive "
                              "the console (reaper backend only)")
@@ -75,7 +76,26 @@ def main() -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s: %(message)s")
 
-    sender = OSCSender(args.ip, args.port)
+    # Discovered so the bridge runs with no arguments; flags override any of it.
+    surface = discover_osc_surface()
+    backend_name = args.backend or ("reaper" if surface else "holophonix")
+    if surface and backend_name == "reaper":
+        where = (f"sending to port {surface.send_to_port}" if surface.send_to_port
+                 else "destination learned from REAPER's first message")
+        logging.info(f"Found REAPER OSC surface {surface.name!r}: {where}, "
+                     f"listening on {surface.listen_on_port}")
+        ip = args.ip or "127.0.0.1"
+        port = args.port or surface.send_to_port
+        listen_port = args.listen_port or surface.listen_on_port
+        # A device IP of 0.0.0.0 still reaches a local listener on Linux, so it
+        # needs no correction -- noted only for diagnosis.
+        logging.debug(f"REAPER's OSC device IP is {surface.device_ip!r}")
+    else:
+        ip = args.ip or "192.168.1.104"
+        port = args.port or 4003
+        listen_port = args.listen_port
+
+    sender = OSCSender(ip, port)
     inbound: ReaperInbound | None = None
 
     class EchoAwareSender:
@@ -86,7 +106,7 @@ def main() -> int:
                 inbound.note_sent(address, values[0])
             sender.send(address, *values)
 
-    backend = BACKENDS[args.backend](EchoAwareSender())
+    backend = BACKENDS[backend_name](EchoAwareSender())
 
     midi_port = ports.resolve_input(args.midi_in)
     midi_out = ports.resolve_output(args.midi_out)
@@ -119,15 +139,19 @@ def main() -> int:
         logging.warning("No MIDI output found: starting without console state.")
 
     receiver = None
-    if args.listen_port is not None:
-        if outport is None:
-            logging.error("--listen-port needs a MIDI output to drive the console")
-            return 1
-        if args.backend != "reaper":
-            logging.error("--listen-port is only implemented for the reaper backend")
-            return 1
+    if listen_port is not None and backend_name != "reaper":
+        logging.info("Return path is only implemented for the reaper backend.")
+    elif listen_port is not None and outport is None:
+        logging.warning("No MIDI output found: the console cannot be driven back.")
+    elif listen_port is not None:
         inbound = ReaperInbound(outport)
-        receiver = OSCReceiver("0.0.0.0", args.listen_port, inbound.handle)
+
+        def learn_peer(peer_ip: str, peer_port: int) -> None:
+            # REAPER's Device IP/Port mode receives on an ephemeral port, so its
+            # address is taken from whatever it sends us.
+            sender.retarget(peer_ip, peer_port)
+
+        receiver = OSCReceiver("0.0.0.0", listen_port, inbound.handle, learn_peer)
         receiver.start()
 
     if args.sync and outport is not None:
