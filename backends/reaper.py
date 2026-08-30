@@ -23,8 +23,9 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 from yamaha01v96i import events as ev
 
@@ -75,12 +76,50 @@ class OscSurface(NamedTuple):
     device_ip: str
 
 
-def config_path() -> Path:
-    """Where REAPER keeps reaper.ini on this platform."""
+def config_paths() -> List[Path]:
+    """Candidate locations of reaper.ini, most likely first.
+
+    REAPER stores it per-platform, and can also be run "portable" with the config
+    beside the binary. $REAPER_CONFIG overrides everything.
+    """
     override = os.environ.get("REAPER_CONFIG")
     if override:
-        return Path(override)
-    return Path.home() / ".config" / "REAPER" / "reaper.ini"
+        return [Path(override)]
+
+    home = Path.home()
+    if sys.platform == "darwin":
+        return [home / "Library" / "Application Support" / "REAPER" / "reaper.ini"]
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        roots = [Path(appdata)] if appdata else []
+        roots.append(home / "AppData" / "Roaming")
+        return _unique(root / "REAPER" / "reaper.ini" for root in roots)
+    # Linux and other unices; REAPER honours XDG_CONFIG_HOME.
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    roots = [Path(xdg)] if xdg else []
+    roots.append(home / ".config")
+    return _unique(root / "REAPER" / "reaper.ini" for root in roots)
+
+
+def _unique(paths) -> List[Path]:
+    seen, out = set(), []
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+def config_path() -> Optional[Path]:
+    """The first candidate that exists, or None."""
+    seen = set()
+    for candidate in config_paths():
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def discover_osc_surface(path: Optional[Path] = None) -> Optional[OscSurface]:
@@ -93,6 +132,8 @@ def discover_osc_surface(path: Optional[Path] = None) -> Optional[OscSurface]:
     bridge should send and where it should listen.
     """
     path = path or config_path()
+    if path is None:
+        return None
     try:
         lines = path.read_text(errors="replace").splitlines()
     except OSError:
@@ -132,19 +173,24 @@ def discover_listen_port() -> Optional[int]:
     In REAPER's "Device IP/Port" mode there is no configurable local port -- it
     binds an ephemeral one that differs every launch. Without this the bridge
     cannot send anything until REAPER happens to send first, so its port is read
-    from the system instead. Returns None if REAPER is not running or has more
-    than one UDP socket bound, in which case the address is still learned from
+    from the system instead: ``ss`` on Linux, ``lsof`` on macOS. Windows and any
+    failure return None, which is not fatal -- the address is then learned from
     whatever REAPER sends.
     """
+    if sys.platform.startswith("win"):
+        # netstat gives a PID per socket; matching it to REAPER needs a second
+        # lookup, so leave Windows to the fallback below.
+        return None
+    command = (["lsof", "-nP", "-iUDP", "-c", "REAPER"] if sys.platform == "darwin"
+               else ["ss", "-ulnpH"])
     try:
-        out = subprocess.run(["ss", "-ulnpH"], capture_output=True, text=True,
-                             timeout=5).stdout
+        out = subprocess.run(command, capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return None
 
     ports = set()
     for line in out.splitlines():
-        if "reaper" not in line:
+        if "reaper" not in line.lower():
             continue
         for field in line.split():
             if ":" in field and field.rsplit(":", 1)[-1].isdigit():

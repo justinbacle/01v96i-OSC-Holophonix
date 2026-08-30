@@ -47,14 +47,15 @@ Preferences → **Control/OSC/web** → Add → **OSC (Open Sound Control)**:
 | Pattern config | **`01V96i`** | A copy of REAPER's default with `DEVICE_TRACK_COUNT 32`, so more than 8 tracks are reachable |
 | Allow binding messages to REAPER actions | ticked | Master mute is done through a REAPER action |
 
-The pattern file lives at `~/.config/REAPER/OSC/01V96i.ReaperOSC`. Recreate it with:
+Create that pattern file with:
 
 ```bash
-sed 's/^DEVICE_TRACK_COUNT 8\r$/DEVICE_TRACK_COUNT 32\r/' \
-    /opt/REAPER/Plugins/Default.ReaperOSC > ~/.config/REAPER/OSC/01V96i.ReaperOSC
+python3 tools/make_reaper_pattern.py
 ```
 
-(The `\r` matters — REAPER's file uses CRLF line endings.)
+It finds REAPER's stock `Default.ReaperOSC` and its config directory on any platform,
+writes a copy with `DEVICE_TRACK_COUNT 32`, and preserves REAPER's CRLF line endings.
+`--tracks` and `--name` change the count and the file name.
 
 Device IP/Port mode has no configurable local port: REAPER binds an ephemeral one that
 differs every launch. The bridge finds it in the system socket table, and falls back to
@@ -65,6 +66,8 @@ learning it from the first message REAPER sends.
 ```bash
 ./bridge          # add -v to see every message
 ```
+
+On Windows use `bridge.cmd` instead.
 
 ## Limits
 
@@ -98,8 +101,9 @@ manual never mentions Mackie or Logic Control. Three reasons it is not used here
    cannot be adjusted while the REMOTE layer is active — so it is a DAW surface *or* a
    mixer, not both.
 2. **HUI is the legacy protocol.** MCU superseded it, and REAPER's HUI support is partial.
-3. **It crashes REAPER here.** Adding a HUI surface aborts inside ALSA's
-   `snd_rawmidi_open`, called from `reaper_csurf.so` — `SIGABRT`, with coredumps.
+3. **It crashes REAPER here.** On this Linux machine, adding a HUI surface aborts inside
+   ALSA's `snd_rawmidi_open`, called from `reaper_csurf.so` — `SIGABRT`, with coredumps.
+   Untested on Windows and macOS, which do not use ALSA.
 
 The console does emit valid HUI on the DAW port when that layer is selected (confirmed:
 zone/port select on CC `0x0F`/`0x2F`, 14-bit faders on CC `0x00`–`0x07` with LSB on

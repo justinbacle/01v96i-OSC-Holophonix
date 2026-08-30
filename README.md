@@ -32,6 +32,21 @@ pip install -r requirements.txt
 `./bridge` needs no arguments: it probes for the console and, if REAPER has an OSC
 surface configured, reads its settings from REAPER's own config.
 
+### Platforms
+
+The protocol layer (`yamaha01v96i/`) is pure Python and runs anywhere; MIDI and OSC go
+through `mido`/`python-rtmidi`/`python-osc`, which are cross-platform. Platform notes:
+
+| | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| Launcher | `./bridge` | `./bridge` | `bridge.cmd` |
+| REAPER config discovery | yes | yes | yes |
+| REAPER port lookup before it speaks | `ss` | `lsof` | falls back to learning it from REAPER's first message |
+| `tools/monitor.py` | yes | yes | needs `pip install windows-curses` |
+
+The apt packages in the setup block above are Debian/Ubuntu only; on macOS and Windows
+`python-rtmidi` ships prebuilt wheels and needs no compiler.
+
 On startup you will be prompted to select a MIDI input port. Type `q` + Enter to quit.
 
 The console exposes eight USB-MIDI ports; **MIDI 1** is the one to pick. It carries

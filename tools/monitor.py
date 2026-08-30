@@ -27,7 +27,6 @@ Keys:
 from __future__ import annotations
 
 import argparse
-import curses
 import threading
 import json
 import sys
@@ -40,6 +39,13 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    import curses
+except ImportError:  # pragma: no cover - Windows has no curses in the stdlib
+    print("This tool needs curses. On Windows: pip install windows-curses",
+          file=sys.stderr)
+    sys.exit(1)
 
 try:
     import mido
